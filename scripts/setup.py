@@ -23,6 +23,14 @@ def write_private(path, content):
     with os.fdopen(fd, "w") as handle:
         handle.write(content)
 
+# Provider presets only fill the prompts' defaults; every value can still be changed.
+# Hostnames come from each provider's own documentation (see docs/providers.md).
+PRESETS = {
+    "dreamhost": dict(imap="imap.dreamhost.com", imap_port=993, smtp="smtp.dreamhost.com", smtp_port=587,
+                      folders=dict(sentFolder="Sent", draftsFolder="Drafts", trashFolder="Trash")),
+    "custom": dict(imap="", imap_port=993, smtp="", smtp_port=465, folders={}),
+}
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["bearer", "stdio", "oauth"], default="bearer")
@@ -42,18 +50,23 @@ def main():
         account_id = ask("Short account ID", f"mail{index + 1}")
         if not re.fullmatch(r"[a-z0-9_-]{1,40}", account_id) or any(a["id"] == account_id for a in accounts):
             raise ValueError("Account ID must be unique and use lowercase letters, digits, _ or -")
+        preset = PRESETS[ask("Provider preset (" + "/".join(PRESETS) + ")", "dreamhost").lower()]
         email = ask("Email address")
-        username = ask("IMAP username", email)
+        username = ask("IMAP username (DreamHost: the full email address)", email)
         password = hidden("Mailbox / app password")
-        imap = ask("IMAP hostname")
-        imap_port = int(ask("IMAP port: 993 = TLS, 143 = required STARTTLS", "993"))
-        smtp = ask("SMTP hostname")
-        smtp_port = int(ask("SMTP port: 465 = TLS, 587 = required STARTTLS", "465"))
+        imap = ask("IMAP hostname", preset["imap"] or None)
+        imap_port = int(ask("IMAP port: 993 = TLS, 143 = required STARTTLS", str(preset["imap_port"])))
+        smtp = ask("SMTP hostname", preset["smtp"] or None)
+        smtp_port = int(ask("SMTP port: 465 = TLS, 587 = required STARTTLS", str(preset["smtp_port"])))
         if imap_port not in [993, 143] or smtp_port not in [465, 587]:
             raise ValueError("Only encrypted standard mail ports are supported")
+        if not imap or not smtp:
+            raise ValueError("IMAP and SMTP hostnames are required")
         account = dict(id=account_id, email=email, username=username, password=password,
                        imapHost=imap, imapPort=imap_port, smtpHost=smtp, smtpPort=smtp_port,
                        appendSent=ask("Append sent mail to IMAP? Use no if your provider already saves it", "yes").lower() == "yes")
+        for key, default in preset["folders"].items():
+            account[key] = ask(f"{key} name", default)
         if ask("Separate SMTP credentials?", "no").lower() == "yes":
             account.update(smtpUsername=ask("SMTP username"), smtpPassword=hidden("SMTP password"))
         accounts.append(account)

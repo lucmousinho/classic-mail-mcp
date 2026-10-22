@@ -56,12 +56,21 @@ test('unconfigured deployment locks mail access', async () => {
 test('OAuth discovery, unauthenticated rejection, PKCE, origin and body size checks', async () => {
   const { child, url } = await start(18890, true);
   try {
-    const resource = await (await fetch(url + '/.well-known/oauth-protected-resource')).json();
-    assert.equal(resource.resource, base);
-    assert.deepEqual(resource.authorization_servers, [base]);
+    // RFC 9728: the resource is the MCP endpoint URL users enter in Claude; the document is
+    // served both at the root well-known path and at the path-suffixed one Claude probes first.
+    for (const path of [
+      '/.well-known/oauth-protected-resource',
+      '/.well-known/oauth-protected-resource/mcp',
+    ]) {
+      const resource = await (await fetch(url + path)).json();
+      assert.equal(resource.resource, base + '/mcp', path);
+      assert.deepEqual(resource.authorization_servers, [base]);
+    }
     const auth = await (await fetch(url + '/.well-known/oauth-authorization-server')).json();
     assert.deepEqual(auth.code_challenge_methods_supported, ['S256']);
     assert.equal(auth.authorization_response_iss_parameter_supported, true);
+    assert.equal(auth.registration_endpoint, base + '/oauth/register');
+    assert.ok(auth.token_endpoint_auth_methods_supported.includes('none'));
     const res = await fetch(url + '/mcp', {
       method: 'POST',
       headers: {
@@ -80,7 +89,15 @@ test('OAuth discovery, unauthenticated rejection, PKCE, origin and body size che
       }),
     });
     assert.equal(res.status, 401);
-    assert.match(res.headers.get('www-authenticate') ?? '', /oauth-protected-resource/);
+    assert.match(
+      res.headers.get('www-authenticate') ?? '',
+      /resource_metadata="https:\/\/mail\.example\.com\/\.well-known\/oauth-protected-resource\/mcp"/,
+    );
+    // Claude's origin passes the gateway Origin check; unknown origins do not.
+    assert.notEqual(
+      (await fetch(url + '/status', { headers: { Origin: 'https://claude.ai' } })).status,
+      403,
+    );
     const invalid = await fetch(url + '/mcp', {
       method: 'POST',
       headers: { Authorization: 'Bearer invalid' },

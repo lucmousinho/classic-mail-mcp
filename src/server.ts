@@ -3,14 +3,21 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { FastMCP } from 'fastmcp';
 import { Firestore } from '@google-cloud/firestore';
 import { readConfig, secretSchema } from './config.js';
-import { authenticate, authRoutes, createProxy, type Session } from './auth.js';
+import {
+  HOSTED_ORIGINS,
+  authenticate,
+  authRoutes,
+  createProxy,
+  mcpResource,
+  type Session,
+} from './auth.js';
 import { FirestoreLedger, rateLimit, type Database } from './store.js';
 import { SqliteStore } from './sqlite.js';
 import { MailService } from './mail.js';
 import { registerTools } from './tools.js';
 import { landingPage } from './ui.js';
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 async function main() {
   process.umask(0o077);
   const config = readConfig();
@@ -54,8 +61,11 @@ async function main() {
           oauth: {
             enabled: true,
             authorizationServer: proxy.getAuthorizationServerMetadata(),
+            // RFC 9728: `resource` must equal the URL users enter in their client (the /mcp
+            // endpoint). FastMCP then points 401s at /.well-known/oauth-protected-resource/mcp
+            // and serves that document there as well as at the root path.
             protectedResource: {
-              resource: config.baseUrl,
+              resource: mcpResource(config.baseUrl),
               authorizationServers: [config.baseUrl],
               scopesSupported: ['openid', 'email'],
             },
@@ -154,7 +164,7 @@ async function main() {
       "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     );
     const origin = req.headers.origin;
-    if (origin && ![config.baseUrl, 'https://chatgpt.com'].includes(origin)) {
+    if (origin && ![config.baseUrl, ...HOSTED_ORIGINS].includes(origin)) {
       res.writeHead(403).end();
       req.resume();
       return;

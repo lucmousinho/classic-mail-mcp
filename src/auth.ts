@@ -9,12 +9,23 @@ import { SignJWT, jwtVerify, decodeJwt } from 'jose';
 
 export type Session = { email: string; sub: string };
 export const SCOPES = ['openid', 'email'];
+/** Hosted Claude apps (claude.ai web, Desktop, mobile, Cowork) share one fixed callback. */
+export const CLAUDE_CALLBACK = 'https://claude.ai/api/mcp/auth_callback';
 export const CHATGPT_CALLBACK = 'https://chatgpt.com/connector_platform_oauth_redirect';
+/** Exact hosted callbacks accepted for registration and authorization. */
+export const HOSTED_CALLBACKS: readonly string[] = [CLAUDE_CALLBACK, CHATGPT_CALLBACK];
+/** Browser origins of the hosted clients, for the gateway Origin check. */
+export const HOSTED_ORIGINS: readonly string[] = ['https://claude.ai', 'https://chatgpt.com'];
+export const CALLBACK_HINT =
+  'Use the Claude callback, the ChatGPT callback or a native loopback callback';
 
-/** Native Codex returns to a temporary loopback listener, never an arbitrary web host. */
+/**
+ * Native clients (Claude Code, Codex) return to a temporary loopback listener on an
+ * ephemeral port, never an arbitrary web host. Hosted apps use their fixed callback.
+ */
 export function isAllowedCallback(uri: unknown): uri is string {
-  if (uri === CHATGPT_CALLBACK) return true;
   if (typeof uri !== 'string') return false;
+  if (HOSTED_CALLBACKS.includes(uri)) return true;
   const match =
     /^http:\/\/(?:127\.0\.0\.1|localhost):([1-9]\d{0,4})\/callback(?:\/[A-Za-z0-9_-]{1,128})?$/.exec(
       uri,
@@ -40,7 +51,7 @@ export function createProxy(baseUrl: string, secrets: Secrets, db: Database) {
     // Globs only support transport matching. Routes below enforce the exact native shape
     // before registration/authorization; registered redirect URIs remain exact-match bound.
     allowedRedirectUriPatterns: [
-      CHATGPT_CALLBACK,
+      ...HOSTED_CALLBACKS,
       'http://127.0.0.1:*/callback*',
       'http://localhost:*/callback*',
     ],
@@ -124,17 +135,20 @@ export function authenticate(proxy: OAuthProxy, secrets: Secrets, db: Database, 
   };
 }
 
+/** The MCP endpoint URL is the RFC 8707 resource identifier clients present (RFC 9728 metadata). */
+export function mcpResource(baseUrl: string) {
+  return baseUrl + '/mcp';
+}
+
 export function validateOAuthRequest(params: URLSearchParams, baseUrl: string, authorize: boolean) {
   if (
     authorize &&
     (params.getAll('redirect_uri').length !== 1 || !isAllowedCallback(params.get('redirect_uri')))
   )
-    throw new OAuthProxyError(
-      'invalid_redirect_uri',
-      'Use the ChatGPT callback or a native loopback callback',
-    );
+    throw new OAuthProxyError('invalid_redirect_uri', CALLBACK_HINT);
+  // Claude sends the advertised resource (the /mcp endpoint); older clients send the origin.
   const resources = params.getAll('resource');
-  if (resources.some((x) => x !== baseUrl) || resources.length > 1)
+  if (resources.some((x) => x !== baseUrl && x !== mcpResource(baseUrl)) || resources.length > 1)
     throw new OAuthProxyError('invalid_target', 'Resource does not match this server');
   const scope = params.get('scope');
   if (scope && scope.split(' ').some((s) => !SCOPES.includes(s)))
@@ -220,13 +234,7 @@ export function authRoutes(
       body.redirect_uris.length > 5 ||
       !body.redirect_uris.every(isAllowedCallback)
     )
-      return c.json(
-        {
-          error: 'invalid_redirect_uri',
-          error_description: 'Use the ChatGPT callback or a native loopback callback',
-        },
-        400,
-      );
+      return c.json({ error: 'invalid_redirect_uri', error_description: CALLBACK_HINT }, 400);
     // No caller-controlled remote logos/links on the consent page.
     const request = {
       redirect_uris: body.redirect_uris,
@@ -277,11 +285,24 @@ export function authRoutes(
       accessMode === 'read-write'
         ? 'Read mail and attachments, send replies and forwards, manage drafts and folders, and delete messages when you explicitly authorize the action.'
         : 'Read mail and attachments and check connections. Sending, deletion and other write tools are disabled.';
+    // MCP authorization spec: show the redirect host clearly; warn when it is a loopback address.
+    const redirect = new URL(params.get('redirect_uri')!);
+    const loopback = ['127.0.0.1', 'localhost'].includes(redirect.hostname);
+    const returnTo =
+      '<p>After sign-in you will be returned to <strong>' +
+      redirect.host.replace(/[<>&"]/g, '') +
+      '</strong>' +
+      (loopback
+        ? ' (a local program on this computer; any local process can claim this address, so continue only if you just started this connection yourself).'
+        : '.') +
+      '</p>';
     const consent = body.replace(
       '<h3>This will allow the app to:</h3>',
       '<h3>Access to all configured mailboxes</h3><p>' +
         permissions +
-        ' This instance belongs to one operator. Continue only if you trust this client.</p><h3>Google sign-in permissions:</h3>',
+        ' This instance belongs to one operator. Continue only if you trust this client.</p>' +
+        returnTo +
+        '<h3>Google sign-in permissions:</h3>',
     );
     return new Response(consent, { status: response.status, headers });
   });

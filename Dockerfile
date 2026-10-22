@@ -7,7 +7,8 @@ COPY src ./src
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
 FROM node:24-bookworm-slim
-LABEL org.opencontainers.image.source="https://github.com/kapitelh/classic-mail-mcp" \
+ARG SOURCE_URL=https://github.com/kapitelh/classic-mail-mcp
+LABEL org.opencontainers.image.source="${SOURCE_URL}" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.title="Classic Mail MCP"
 ENV NODE_ENV=production HOST=0.0.0.0 SQLITE_PATH=/data/mail.sqlite

@@ -29,18 +29,18 @@ Six tools are available by default; all **21 tools** become available with `ACCE
 
 - TLS certificate validation for every mailbox connection.
 - IMAP 993 / SMTP 465 with implicit TLS; IMAP 143 / SMTP 587 with **mandatory STARTTLS**.
-- OAuth with Google sign-in for remote clients; bearer authentication for local HTTP; stdio for local MCP clients.
+- OAuth with Google sign-in for remote clients (Claude's hosted callback, Claude Code's loopback callback and ChatGPT's callback are allowlisted); bearer authentication for local HTTP; stdio for local MCP clients.
 - Persistent send history prevents automatic duplicate submissions when the same idempotency key is retried.
 - No mailbox passwords, bearer tokens or mail bodies in application logs.
 - SQLite with persistent disk locally; Firestore for multiple Cloud Run instances.
 
 ## Choose a connection
 
-| Your situation                           | Transport                         | Authentication                 | Storage                                                |
-| ---------------------------------------- | --------------------------------- | ------------------------------ | ------------------------------------------------------ |
-| Desktop client that can launch Docker    | stdio                             | Local process access           | SQLite volume                                          |
-| Desktop client with an HTTP MCP endpoint | Streamable HTTP on localhost      | Random bearer token            | SQLite volume                                          |
-| ChatGPT or another remote client         | Streamable HTTP over public HTTPS | Google OAuth + owner allowlist | SQLite on a persistent host, or Firestore on Cloud Run |
+| Your situation                                                                     | Transport                         | Authentication                 | Storage                                                |
+| ---------------------------------------------------------------------------------- | --------------------------------- | ------------------------------ | ------------------------------------------------------ |
+| Desktop client that can launch Docker                                              | stdio                             | Local process access           | SQLite volume                                          |
+| Desktop client with an HTTP MCP endpoint                                           | Streamable HTTP on localhost      | Random bearer token            | SQLite volume                                          |
+| Claude (claude.ai, Desktop, mobile, Claude Code), ChatGPT or another remote client | Streamable HTTP over public HTTPS | Google OAuth + owner allowlist | SQLite on a persistent host, or Firestore on Cloud Run |
 
 Google sign-in authenticates **you to this MCP**. It does not grant Gmail access. Your configured IMAP/SMTP credentials authenticate to your mail provider separately.
 
@@ -98,7 +98,7 @@ Configure your MCP client to launch the Docker command documented in [client set
 
 ## Deploy with OAuth
 
-[Deployment guide →](docs/deployment.md) covers a persistent Docker host with an HTTPS reverse proxy and a two-stage Google Cloud Run setup script. You need your **own** cloud project, Google OAuth web client, credentials and allowed sign-in identity. There is no shared hosted mailbox service.
+[Deployment guide →](docs/deployment.md) covers a persistent Docker host with an HTTPS reverse proxy and a two-stage Google Cloud Run setup script. [Portainer guide (português) →](docs/portainer.md) covers a Portainer stack behind Traefik or Nginx Proxy Manager, the DreamHost mailbox preset and the claude.ai custom connector, with ready-made stack files in `deploy/portainer/`. You need your **own** cloud project, Google OAuth web client, credentials and allowed sign-in identity. There is no shared hosted mailbox service.
 
 ## Provider support
 

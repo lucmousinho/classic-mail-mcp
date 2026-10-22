@@ -1,0 +1,70 @@
+# Classic Mail MCP · stack para Portainer (Docker standalone) atrás do Traefik.
+#
+# Variáveis do stack (aba "Environment variables" do Portainer):
+#   IMAGE            ghcr.io/SEU-USUARIO/classic-mail-mcp:latest  (imagem publicada pelo workflow do fork)
+#   BASE_URL         https://mail-mcp.seudominio.com               (origem HTTPS pública, sem barra final)
+#   MCP_HOST         mail-mcp.seudominio.com                       (mesmo host, para a regra do Traefik)
+#   CONFIG_FILE      /opt/classic-mail/config.json                 (arquivo gerado pelo scripts/setup.py --mode oauth, modo 600)
+#   ACCESS_MODE      read-only | read-write                        (comece em read-only)
+#   TRAEFIK_NETWORK  nome da rede externa onde o Traefik escuta (ex.: traefik_public)
+#   CERT_RESOLVER    nome do certresolver do seu Traefik (ex.: letsencrypt)
+#
+# Guia completo em português: docs/portainer.md
+services:
+  classic-mail:
+    image: ${IMAGE:-ghcr.io/SEU-USUARIO/classic-mail-mcp:latest}
+    container_name: classic-mail-mcp
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:size=32m, mode=1777]
+    volumes:
+      - ${CONFIG_FILE:-/opt/classic-mail/config.json}:/run/secrets/mail-config.json:ro
+      - classic_mail_data:/data
+    environment:
+      TRANSPORT: http
+      AUTH_MODE: oauth
+      ACCESS_MODE: ${ACCESS_MODE:-read-only}
+      BASE_URL: ${BASE_URL}
+      APP_CONFIG_FILE: /run/secrets/mail-config.json
+      HOST: 0.0.0.0
+      PORT: 8080
+      STORAGE: sqlite
+      SQLITE_PATH: /data/mail.sqlite
+    networks:
+      - proxy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    stop_grace_period: 15s
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik_public}
+      traefik.http.routers.classic-mail.rule: Host(`${MCP_HOST}`)
+      traefik.http.routers.classic-mail.entrypoints: websecure
+      traefik.http.routers.classic-mail.tls: 'true'
+      traefik.http.routers.classic-mail.tls.certresolver: ${CERT_RESOLVER:-letsencrypt}
+      traefik.http.routers.classic-mail.service: classic-mail
+      traefik.http.services.classic-mail.loadbalancer.server.port: '8080'
+      # O servidor responde em até 125 s por chamada; não deixe o proxy cortar antes.
+      traefik.http.services.classic-mail.loadbalancer.responseforwarding.flushinterval: 100ms
+      # Nunca cachear nem remover Authorization / WWW-Authenticate / cookies: o Traefik não faz isso por padrão.
+
+volumes:
+  classic_mail_data:
+
+networks:
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_public}

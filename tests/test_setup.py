@@ -18,7 +18,7 @@ class SetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             try:
                 os.chdir(tmp)
-                answers = ["1", "personal", "owner@example.com", "", "imap.example.com", "993", "smtp.example.com", "587", "no", "no"]
+                answers = ["1", "personal", "custom", "owner@example.com", "", "imap.example.com", "993", "smtp.example.com", "587", "no", "no"]
                 output = io.StringIO()
                 with patch("sys.argv", ["setup.py"]), patch("builtins.input", side_effect=answers), patch("getpass.getpass", return_value="hidden-test-value"), contextlib.redirect_stdout(output):
                     setup.main()
@@ -34,6 +34,26 @@ class SetupTests(unittest.TestCase):
                 with patch("sys.argv", ["setup.py"]), self.assertRaises(ValueError):
                     setup.main()
                 self.assertEqual(json.loads(path.read_text()), config)
+            finally:
+                os.chdir(previous)
+
+    def test_dreamhost_preset_fills_hosts_ports_and_folders(self):
+        previous = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                os.chdir(tmp)
+                # Empty answers accept each default: DreamHost hosts, 993/587, standard folder names.
+                answers = ["1", "", "", "contato@example.com", "", "", "", "", "", "", "", "", "", "no"]
+                with patch("sys.argv", ["setup.py"]), patch("builtins.input", side_effect=answers), patch("getpass.getpass", return_value="hidden-test-value"), contextlib.redirect_stdout(io.StringIO()):
+                    setup.main()
+                account = json.loads(Path(".secrets/config.json").read_text())["accounts"][0]
+                self.assertEqual(account["imapHost"], "imap.dreamhost.com")
+                self.assertEqual(account["imapPort"], 993)
+                self.assertEqual(account["smtpHost"], "smtp.dreamhost.com")
+                self.assertEqual(account["smtpPort"], 587)
+                self.assertEqual(account["username"], "contato@example.com")
+                self.assertEqual((account["sentFolder"], account["draftsFolder"], account["trashFolder"]), ("Sent", "Drafts", "Trash"))
+                self.assertTrue(account["appendSent"])
             finally:
                 os.chdir(previous)
 

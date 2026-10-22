@@ -8,7 +8,9 @@ import {
   createProxy,
   authenticate,
   CHATGPT_CALLBACK,
+  CLAUDE_CALLBACK,
   isAllowedCallback,
+  mcpResource,
   validateOAuthRequest,
   type Session,
 } from '../src/auth.js';
@@ -54,13 +56,20 @@ function memoryDb() {
 }
 test('native callback allowlist rejects remote hosts, URL ambiguity and duplicate redirects', () => {
   for (const uri of [
+    CLAUDE_CALLBACK,
     CHATGPT_CALLBACK,
     'http://127.0.0.1:32123/callback',
     'http://localhost:65535/callback/native_123',
+    // Claude Code: RFC 8252 loopback on an ephemeral port
+    'http://localhost:3118/callback',
   ])
     assert.equal(isAllowedCallback(uri), true, uri);
   for (const uri of [
     'https://evil.example/callback',
+    'https://claude.ai/api/mcp/auth_callback/',
+    'https://claude.ai.evil.example/api/mcp/auth_callback',
+    'http://claude.ai/api/mcp/auth_callback',
+    'https://claude.ai/api/mcp/auth_callback?next=https://evil.example',
     'http://127.0.0.1.evil.example:32123/callback',
     'http://localhost:32123@example.org/callback',
     'http://user@localhost:32123/callback',
@@ -84,6 +93,30 @@ test('native callback allowlist rejects remote hosts, URL ambiguity and duplicat
   params.append('redirect_uri', 'https://evil.example/callback');
   assert.throws(() => validateOAuthRequest(params, 'https://mail.example.com', true));
 });
+test('resource indicator accepts the origin and the advertised /mcp endpoint only', () => {
+  const base = 'https://mail.example.com';
+  const ok = (resource: string) =>
+    validateOAuthRequest(
+      new URLSearchParams({
+        redirect_uri: CLAUDE_CALLBACK,
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+        resource,
+      }),
+      base,
+      true,
+    );
+  assert.equal(mcpResource(base), base + '/mcp');
+  assert.doesNotThrow(() => ok(base));
+  assert.doesNotThrow(() => ok(base + '/mcp'));
+  for (const bad of [
+    base + '/mcp/',
+    base + '/other',
+    'https://evil.example/mcp',
+    'http://mail.example.com/mcp',
+  ])
+    assert.throws(() => ok(bad), bad);
+});
 test('persistent OAuth store atomic take allows exactly one reader and enforces TTL', async () => {
   const { db } = memoryDb(),
     store = new FirestoreTokenStore(db);
@@ -95,6 +128,7 @@ test('persistent OAuth store atomic take allows exactly one reader and enforces 
 });
 for (const backend of ['firestore', 'sqlite'])
   for (const redirect of [
+    CLAUDE_CALLBACK,
     CHATGPT_CALLBACK,
     'http://127.0.0.1:32123/callback',
     'http://localhost:32124/callback/native-client',
@@ -142,6 +176,8 @@ for (const backend of ['firestore', 'sqlite'])
       const app = server.getApp();
       let googleChallenge: string | null = null;
       const realFetch = globalThis.fetch;
+      // Claude presents the RFC 9728 resource (the /mcp endpoint); older clients present the origin.
+      const resource = redirect === CLAUDE_CALLBACK ? mcpResource(base) : base;
       const grantedScope =
         redirect === CHATGPT_CALLBACK
           ? 'openid email'
@@ -200,7 +236,7 @@ for (const backend of ['firestore', 'sqlite'])
           redirect_uri: redirect,
           response_type: 'code',
           scope: 'openid email',
-          resource: base,
+          resource,
           state: 'client-state',
           code_challenge: challenge,
           code_challenge_method: 'S256',
@@ -210,6 +246,15 @@ for (const backend of ['firestore', 'sqlite'])
         const body = await consent.text();
         assert.match(body, /send replies/);
         assert.match(body, /delete messages/);
+        assert.match(
+          body,
+          new RegExp('returned to <strong>' + new URL(redirect).host.replace('.', '\\.')),
+        );
+        if (
+          new URL(redirect).hostname !== 'claude.ai' &&
+          new URL(redirect).hostname !== 'chatgpt.com'
+        )
+          assert.match(body, /local program on this computer/);
         assert.equal(consent.headers.get('referrer-policy'), 'same-origin');
         const transaction = body.match(/name="transaction_id" value="([^"]+)"/)![1];
         const cookie = consent.headers.get('set-cookie')!.split(';')[0];
@@ -259,7 +304,7 @@ for (const backend of ['firestore', 'sqlite'])
           code: back.searchParams.get('code')!,
           redirect_uri: redirect,
           code_verifier: verifier,
-          resource: base,
+          resource,
         });
         const wrongRedirect = new URLSearchParams(exchange);
         wrongRedirect.set('redirect_uri', 'http://127.0.0.1:32125/callback');
