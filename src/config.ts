@@ -70,10 +70,44 @@ export const secretSchema = z
   );
 export type Secrets = z.infer<typeof secretSchema>;
 
+/**
+ * Multi-user "mailbox" mode: nobody's mailbox password lives in the configuration. Each person
+ * signs in through the server's own OAuth authorization server with their IMAP credentials,
+ * which are verified against the provider, sealed with encryptionKey and bound to that person.
+ */
+export const providerSchema = z
+  .object({
+    imapHost: hostname,
+    imapPort: z.union([z.literal(993), z.literal(143)]).default(993),
+    smtpHost: hostname,
+    smtpPort: z.union([z.literal(465), z.literal(587)]).default(465),
+    sentFolder: folderSchema.optional(),
+    draftsFolder: folderSchema.optional(),
+    trashFolder: folderSchema.optional(),
+    archiveFolder: folderSchema.optional(),
+    appendSent: z.boolean().default(true),
+  })
+  .strict();
+export const mailboxSecretSchema = z
+  .object({
+    allowedDomains: z.array(hostname.toLowerCase()).min(1).max(50),
+    provider: providerSchema,
+    displayName: z.string().min(1).max(60).default('Classic Mail'),
+    jwtSigningKey: key,
+    encryptionKey: key,
+    consentSigningKey: key,
+  })
+  .strict()
+  .refine(
+    (v) => new Set([v.jwtSigningKey, v.encryptionKey, v.consentSigningKey]).size === 3,
+    'Use independent cryptographic keys',
+  );
+export type MailboxSecrets = z.infer<typeof mailboxSecretSchema>;
+
 export function readConfig() {
   const transport = z.enum(['stdio', 'http']).parse(process.env.TRANSPORT ?? 'http');
   const authMode = z
-    .enum(['oauth', 'bearer', 'stdio'])
+    .enum(['oauth', 'bearer', 'stdio', 'mailbox'])
     .parse(process.env.AUTH_MODE ?? (transport === 'stdio' ? 'stdio' : 'bearer'));
   if ((transport === 'stdio') !== (authMode === 'stdio'))
     throw Error('stdio requires AUTH_MODE=stdio; HTTP requires authentication');
@@ -91,6 +125,7 @@ export function readConfig() {
       (u.protocol !== 'https:' &&
         !(
           authMode !== 'oauth' &&
+          authMode !== 'mailbox' &&
           u.protocol === 'http:' &&
           ['localhost', '127.0.0.1'].includes(u.hostname)
         ))
@@ -104,12 +139,18 @@ export function readConfig() {
   const source = process.env.APP_CONFIG_JSON,
     file = process.env.APP_CONFIG_FILE;
   if (source && file) throw Error('Choose APP_CONFIG_FILE or APP_CONFIG_JSON, not both');
-  let secrets: z.infer<typeof localSecretSchema> | Secrets | undefined;
+  let secrets: z.infer<typeof localSecretSchema> | Secrets | MailboxSecrets | undefined;
   if (source || file) {
     try {
       const raw = source ?? readFileSync(file!, 'utf8');
       if (Buffer.byteLength(raw) > 1024 * 1024) throw Error();
-      secrets = (authMode === 'oauth' ? secretSchema : localSecretSchema).parse(JSON.parse(raw));
+      secrets = (
+        authMode === 'oauth'
+          ? secretSchema
+          : authMode === 'mailbox'
+            ? mailboxSecretSchema
+            : localSecretSchema
+      ).parse(JSON.parse(raw));
       if (
         authMode === 'bearer' &&
         (!('bearerToken' in secrets) ||

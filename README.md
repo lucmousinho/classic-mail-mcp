@@ -11,7 +11,7 @@
 **A self-hosted MCP server for the IMAP and SMTP mailbox you already have.**
 Connect an AI assistant to search and read email, inspect attachments, and — when explicitly enabled — send messages, manage drafts and organize folders.
 
-Built for people whose mail provider does not offer an AI integration. Run it on your computer with Docker, on your own server, or on Google Cloud Run. Every installation belongs to **one operator**, with up to ten configured mailboxes.
+Built for people whose mail provider does not offer an AI integration. Run it on your computer with Docker, on your own server, or on Google Cloud Run. An installation serves either **one operator** with up to ten configured mailboxes, or, in **mailbox mode**, a whole team where each person signs in with their own mailbox credentials and reaches only that mailbox ([Portainer + Claude Team guide](docs/portainer.md), in Portuguese).
 
 > Public preview. Automated tests cover the protocol and security boundaries; provider compatibility and client sign-in must still be verified on your installation. This project has not had an independent security audit.
 
@@ -36,11 +36,12 @@ Six tools are available by default; all **21 tools** become available with `ACCE
 
 ## Choose a connection
 
-| Your situation                                                                     | Transport                         | Authentication                 | Storage                                                |
-| ---------------------------------------------------------------------------------- | --------------------------------- | ------------------------------ | ------------------------------------------------------ |
-| Desktop client that can launch Docker                                              | stdio                             | Local process access           | SQLite volume                                          |
-| Desktop client with an HTTP MCP endpoint                                           | Streamable HTTP on localhost      | Random bearer token            | SQLite volume                                          |
-| Claude (claude.ai, Desktop, mobile, Claude Code), ChatGPT or another remote client | Streamable HTTP over public HTTPS | Google OAuth + owner allowlist | SQLite on a persistent host, or Firestore on Cloud Run |
+| Your situation                                                                                   | Transport                         | Authentication                                                                           | Storage                                                |
+| ------------------------------------------------------------------------------------------------ | --------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Desktop client that can launch Docker                                                            | stdio                             | Local process access                                                                     | SQLite volume                                          |
+| Desktop client with an HTTP MCP endpoint                                                         | Streamable HTTP on localhost      | Random bearer token                                                                      | SQLite volume                                          |
+| Claude (claude.ai, Desktop, mobile, Claude Code), ChatGPT or another remote client, one operator | Streamable HTTP over public HTTPS | Google OAuth + owner allowlist                                                           | SQLite on a persistent host, or Firestore on Cloud Run |
+| A team: each person connects their own mailbox (`AUTH_MODE=mailbox`)                             | Streamable HTTP over public HTTPS | Built-in OAuth server; sign-in with the mailbox's own IMAP credentials, domain allowlist | SQLite on a persistent host                            |
 
 Google sign-in authenticates **you to this MCP**. It does not grant Gmail access. Your configured IMAP/SMTP credentials authenticate to your mail provider separately.
 

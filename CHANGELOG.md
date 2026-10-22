@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.0 — multi-user "mailbox" mode
+
+- New `AUTH_MODE=mailbox`: the server is its own OAuth 2.1 authorization server. Each person signs in with the IMAP credentials of a mailbox on an operator-allowed domain; the password is verified against the provider once, sealed with AES-256-GCM under the operator's `encryptionKey` (bound to that person), and every tool call resolves to that person's mailbox only. No mailbox credential exists in the configuration.
+- Dynamic Client Registration limited to public clients with S256 PKCE (what Claude and Claude Code use); authorization codes are one-use, refresh tokens rotate and are client-bound, access tokens can be revoked, removing a user revokes everything at once.
+- Sign-in attempts are throttled per mailbox (5 / 15 min), per client IP and globally before the provider is contacted, so a shared egress IP cannot be locked out by one person's typos.
+- Per-user MailService resolution in the tool layer (`registerTools` accepts a session resolver); send-idempotency ledger keys are prefixed with the subject.
+- `scripts/setup.py --mode mailbox`, `dist/users-cli.js list|remove`, Portainer stacks default to `AUTH_MODE=mailbox`, Portuguese guide rewritten for Claude Team.
+- The single-operator modes (`oauth` with Google, `bearer`, `stdio`) are unchanged.
+
 ## 2.1.0 — Claude connector, DreamHost preset, Portainer stack
 
 - OAuth: allowlist the hosted Claude callback `https://claude.ai/api/mcp/auth_callback` (claude.ai, Desktop, mobile, Cowork) next to the ChatGPT callback; Claude Code's loopback callback was already accepted. Gateway Origin check accepts `https://claude.ai`.

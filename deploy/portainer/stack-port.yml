@@ -5,7 +5,8 @@
 # Variáveis do stack (aba "Environment variables" do Portainer):
 #   IMAGE          ghcr.io/SEU-USUARIO/classic-mail-mcp:latest
 #   BASE_URL       https://mail-mcp.seudominio.com   (origem HTTPS pública, sem barra final)
-#   CONFIG_FILE    /opt/classic-mail/config.json     (gerado pelo scripts/setup.py --mode oauth)
+#   CONFIG_FILE    /opt/classic-mail/config.json     (gerado pelo scripts/setup.py --mode mailbox)
+#   AUTH_MODE      mailbox (multiusuário) | oauth (um operador, login Google)
 #   ACCESS_MODE    read-only | read-write
 #   BIND_PORT      8080                              (porta local que o proxy vai usar)
 #
@@ -29,7 +30,7 @@ services:
       - classic_mail_data:/data
     environment:
       TRANSPORT: http
-      AUTH_MODE: oauth
+      AUTH_MODE: ${AUTH_MODE:-mailbox}
       ACCESS_MODE: ${ACCESS_MODE:-read-only}
       BASE_URL: ${BASE_URL}
       APP_CONFIG_FILE: /run/secrets/mail-config.json

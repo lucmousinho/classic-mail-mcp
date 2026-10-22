@@ -1,0 +1,25 @@
+{
+  "googleClientId": "SEU-ID.apps.googleusercontent.com",
+  "googleClientSecret": "SEGREDO-DO-CLIENTE-OAUTH-WEB",
+  "allowedEmails": ["sua.conta.google@example.com"],
+  "jwtSigningKey": "GERE-UMA-CHAVE-ALEATORIA-DE-64-CARACTERES-1",
+  "encryptionKey": "GERE-UMA-CHAVE-ALEATORIA-DE-64-CARACTERES-2",
+  "consentSigningKey": "GERE-UMA-CHAVE-ALEATORIA-DE-64-CARACTERES-3",
+  "accounts": [
+    {
+      "id": "empresa",
+      "name": "Caixa empresarial (DreamHost)",
+      "email": "contato@example.com",
+      "username": "contato@example.com",
+      "password": "SENHA-DA-CAIXA-NO-PAINEL-DREAMHOST",
+      "imapHost": "imap.dreamhost.com",
+      "imapPort": 993,
+      "smtpHost": "smtp.dreamhost.com",
+      "smtpPort": 587,
+      "sentFolder": "Sent",
+      "draftsFolder": "Drafts",
+      "trashFolder": "Trash",
+      "appendSent": true
+    }
+  ]
+}

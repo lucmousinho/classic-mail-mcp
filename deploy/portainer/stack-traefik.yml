@@ -4,8 +4,9 @@
 #   IMAGE            ghcr.io/SEU-USUARIO/classic-mail-mcp:latest  (imagem publicada pelo workflow do fork)
 #   BASE_URL         https://mail-mcp.seudominio.com               (origem HTTPS pública, sem barra final)
 #   MCP_HOST         mail-mcp.seudominio.com                       (mesmo host, para a regra do Traefik)
-#   CONFIG_FILE      /opt/classic-mail/config.json                 (arquivo gerado pelo scripts/setup.py --mode oauth, modo 600)
-#   ACCESS_MODE      read-only | read-write                        (comece em read-only)
+#   CONFIG_FILE      /opt/classic-mail/config.json                 (gerado pelo scripts/setup.py --mode mailbox, modo 600)
+#   AUTH_MODE        mailbox (multiusuário: cada pessoa entra com a própria senha) | oauth (um operador, login Google)
+#   ACCESS_MODE      read-only | read-write
 #   TRAEFIK_NETWORK  nome da rede externa onde o Traefik escuta (ex.: traefik_public)
 #   CERT_RESOLVER    nome do certresolver do seu Traefik (ex.: letsencrypt)
 #
@@ -25,7 +26,7 @@ services:
       - classic_mail_data:/data
     environment:
       TRANSPORT: http
-      AUTH_MODE: oauth
+      AUTH_MODE: ${AUTH_MODE:-mailbox}
       ACCESS_MODE: ${ACCESS_MODE:-read-only}
       BASE_URL: ${BASE_URL}
       APP_CONFIG_FILE: /run/secrets/mail-config.json

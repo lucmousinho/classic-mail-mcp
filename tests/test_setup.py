@@ -57,5 +57,25 @@ class SetupTests(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
+    def test_mailbox_mode_stores_domains_and_provider_without_any_password(self):
+        previous = Path.cwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                os.chdir(tmp)
+                answers = ["Mamboo.co.ao, mambootech.com", "", "", "", "", "", "", "", "", "", "Mamboo Mail"]
+                with patch("sys.argv", ["setup.py", "--mode", "mailbox"]), patch("builtins.input", side_effect=answers), patch("getpass.getpass", side_effect=AssertionError("no password prompt expected")), contextlib.redirect_stdout(io.StringIO()):
+                    setup.main()
+                config = json.loads(Path(".secrets/config.json").read_text())
+                self.assertEqual(config["allowedDomains"], ["mamboo.co.ao", "mambootech.com"])
+                self.assertEqual(config["provider"]["imapHost"], "imap.dreamhost.com")
+                self.assertEqual(config["provider"]["smtpPort"], 587)
+                self.assertEqual(config["provider"]["sentFolder"], "Sent")
+                self.assertEqual(config["displayName"], "Mamboo Mail")
+                self.assertNotIn("accounts", config)
+                self.assertEqual(len({config["jwtSigningKey"], config["encryptionKey"], config["consentSigningKey"]}), 3)
+                self.assertIn("AUTH_MODE=mailbox", Path(".env").read_text())
+            finally:
+                os.chdir(previous)
+
 if __name__ == "__main__":
     unittest.main()

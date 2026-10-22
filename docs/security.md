@@ -11,6 +11,17 @@ Classic Mail is a **single-operator self-hosted service**. Every configured mail
 
 The application does not implement provider XOAUTH2, per-mailbox users, S/MIME, PGP, end-to-end email encryption or a human-approval UI. TLS protects transport; it does not make ordinary email end-to-end encrypted.
 
+## Multi-user mailbox mode
+
+`AUTH_MODE=mailbox` replaces the Google proxy with a built-in authorization server. Trust boundaries change as follows:
+
+- Identity is the mailbox: a sign-in is one TLS-verified IMAP login with the credentials the person typed, on a domain the operator allowed. Nothing else vouches for the person.
+- Each person's password is sealed with AES-256-GCM under a key derived from `encryptionKey`, with the subject as associated data, and opened only to build that person's own `MailService`. Tool calls never take a credential or a host; the account they can name is the one bound to their token.
+- Tokens: HS256 access tokens (1 h) checked against a server-side issuance record; refresh tokens (30 d) are random, client-bound, atomically rotated; authorization codes are one-use and PKCE-bound; only public clients are registered. Removing a user deletes the sealed record, which denies every outstanding token at the next request.
+- Sign-in throttling runs per mailbox, per client IP and globally **before** the provider is contacted, because providers such as DreamHost block an IP after repeated failures and all users share the server's egress IP.
+- The sign-in page is served by this server under its CSP (no scripts) and binds the browser transaction with a signed, HttpOnly, Secure cookie; the form is accepted only from the server's own origin.
+- Residual risks: a compromised host exposes `encryptionKey` and the sealed records together; the operator can impersonate any user; the page is a password form on the operator's domain, so people must be told to type it only at that exact address.
+
 ## OAuth controls
 
 - S256 PKCE, with independent upstream Google and downstream MCP verifier/challenge pairs.

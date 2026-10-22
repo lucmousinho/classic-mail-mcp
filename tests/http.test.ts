@@ -128,3 +128,83 @@ test('OAuth discovery, unauthenticated rejection, PKCE, origin and body size che
     child.kill();
   }
 });
+test('mailbox mode: discovery, locked tools, sign-in page reachable through the public gateway', async () => {
+  const config = {
+    allowedDomains: ['mamboo.co.ao', 'mambootech.com'],
+    provider: { imapHost: 'imap.dreamhost.com', smtpHost: 'smtp.dreamhost.com', smtpPort: 587 },
+    displayName: 'Mamboo Mail',
+    jwtSigningKey: 'j'.repeat(50),
+    encryptionKey: 'e'.repeat(50),
+    consentSigningKey: 'c'.repeat(50),
+  };
+  const child = spawn(process.execPath, ['dist/server.js'], {
+    env: {
+      ...process.env,
+      PORT: '18900',
+      BASE_URL: base,
+      AUTH_MODE: 'mailbox',
+      ACCESS_MODE: 'read-write',
+      SQLITE_PATH: ':memory:',
+      APP_CONFIG_JSON: JSON.stringify(config),
+    },
+    stdio: 'ignore',
+  });
+  const url = 'http://127.0.0.1:18900';
+  try {
+    let up = false;
+    for (let i = 0; i < 80 && !up; i++) {
+      try {
+        up = (await fetch(url + '/status')).ok;
+      } catch {}
+      if (!up) await delay(100);
+    }
+    assert.ok(up, 'server started');
+    const status = await (await fetch(url + '/status')).json();
+    assert.equal(status.mailAccess, 'requires_oauth');
+    assert.equal(status.accessMode, 'read-write');
+    const auth = await (await fetch(url + '/.well-known/oauth-authorization-server')).json();
+    assert.equal(auth.issuer, base);
+    assert.equal(auth.registration_endpoint, base + '/oauth/register');
+    assert.deepEqual(auth.token_endpoint_auth_methods_supported, ['none']);
+    assert.deepEqual(auth.scopes_supported, ['mail']);
+    const resource = await (await fetch(url + '/.well-known/oauth-protected-resource/mcp')).json();
+    assert.equal(resource.resource, base + '/mcp');
+    const res = await fetch(url + '/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
+      body: '{}',
+    });
+    assert.equal(res.status, 401);
+    assert.match(res.headers.get('www-authenticate') ?? '', /oauth-protected-resource\/mcp/);
+    const reg = await fetch(url + '/oauth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['https://claude.ai/api/mcp/auth_callback'] }),
+    });
+    assert.equal(reg.status, 201);
+    const client = await reg.json();
+    const page = await fetch(
+      url +
+        '/oauth/authorize?' +
+        new URLSearchParams({
+          client_id: client.client_id,
+          redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+          response_type: 'code',
+          code_challenge: 'a'.repeat(43),
+          code_challenge_method: 'S256',
+          resource: base + '/mcp',
+        }),
+    );
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    assert.match(html, /Mamboo Mail/);
+    assert.match(html, /claude\.ai/);
+    assert.doesNotMatch(html, /<script/);
+    assert.match(page.headers.get('content-security-policy') ?? '', /default-src 'none'/);
+  } finally {
+    child.kill();
+  }
+});
