@@ -59,6 +59,15 @@ type Transaction = {
 };
 type UserRecord = { email: string; sealed: string; createdAt: number; lastLoginAt: number };
 type Grant = { sub: string; clientId: string };
+type LoginOutcome = { redirect: string } | { html: string; status: number };
+
+/** Disables the submit button on first click; a second click is ignored. Allowed by hash in PAGE_CSP. */
+const PAGE_SCRIPT =
+  "document.forms[0].addEventListener('submit',function(e){var b=this.querySelector('button');if(b.disabled){e.preventDefault();return}b.disabled=true;b.textContent='Signing in\u2026'})";
+const PAGE_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-" +
+  createHash('sha256').update(PAGE_SCRIPT).digest('base64') +
+  "'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 export type MailboxAuthOptions = {
   baseUrl: string;
@@ -111,6 +120,7 @@ export class MailboxAuth {
   private store: FirestoreTokenStore;
   private ledger: SendLedger;
   private services = new Map<string, { service: MailService; expires: number }>();
+  private inflight = new Map<string, Promise<LoginOutcome>>();
   private signingKey: Uint8Array;
   private cookieKey: Uint8Array;
   private verifyMailbox: (account: Account) => Promise<void>;
@@ -287,8 +297,72 @@ ${error ? `<div class="err">${escape(error)}</div>` : ''}
 <label for="password">Mailbox password</label><input id="password" name="password" type="password" required maxlength="4096" autocomplete="current-password">
 <button type="submit">Sign in and connect</button>
 </form>
+<script>${PAGE_SCRIPT}</script>
 <small>Allowed domains: ${s.allowedDomains.map(escape).join(', ')}. Your password is checked against ${escape(s.provider.imapHost)} and stored encrypted on this server only. Too many failed attempts lock sign-in for a while.</small>
 </main></body></html>`;
+  }
+
+  private async performLogin(
+    transactionId: string,
+    form: URLSearchParams,
+    ip: string,
+  ): Promise<LoginOutcome> {
+    const txn = (await this.store.get('mb-txn:' + transactionId)) as Transaction | null;
+    if (!txn) throw new AuthError('invalid_request', 'Sign-in expired; restart from your client');
+    const redirectHost = new URL(txn.redirectUri).host;
+    const retry = (message: string): LoginOutcome => ({
+      html: this.page(transactionId, redirectHost, message),
+      status: 400,
+    });
+    const parsed = email.safeParse(form.get('email')?.trim().toLowerCase());
+    const password = form.get('password') ?? '';
+    if (!parsed.success || !password || password.length > 4096)
+      return retry('Enter the full email address and the mailbox password.');
+    const address = parsed.data,
+      domain = address.slice(address.lastIndexOf('@') + 1);
+    if (!this.options.secrets.allowedDomains.includes(domain))
+      return retry('This email domain is not allowed on this server.');
+    // Attempts are counted before the provider is contacted: a shared egress IP must never be
+    // locked out by one person's typos. Order: per mailbox, per client IP, then global.
+    const sub = subjectFor(this.options.secrets.encryptionKey, address);
+    try {
+      await rateLimit(this.options.db, sub, 'login', 5, 900);
+      await rateLimit(this.options.db, 'ip:' + ip, 'login', 20, 3600);
+      await rateLimit(this.options.db, 'public', 'login', 120, 3600);
+    } catch {
+      return retry('Too many sign-in attempts. Wait 15 minutes and try again.');
+    }
+    try {
+      await this.verifyMailbox(accountFor(this.options.secrets, address, password));
+    } catch {
+      return retry('The mail server rejected this email address or password.');
+    }
+    const taken = (await this.store.take('mb-txn:' + transactionId)) as Transaction | null;
+    if (!taken) throw new AuthError('invalid_request', 'Sign-in already completed');
+    const existing = (await this.store.get('mb-user:' + sub)) as UserRecord | null;
+    await this.store.save('mb-user:' + sub, {
+      email: address,
+      sealed: seal(this.options.secrets.encryptionKey, sub, password),
+      createdAt: existing?.createdAt ?? this.now(),
+      lastLoginAt: this.now(),
+    } satisfies UserRecord);
+    this.services.delete(sub);
+    if (!existing) {
+      const users = await this.listUsers();
+      if (!users.some((u) => u.sub === sub))
+        await this.store.save('mb-users', [...users, { sub, email: address }]);
+    }
+    const code = randomBytes(32).toString('base64url');
+    await this.store.save(
+      'mb-code:' + code,
+      { sub, clientId: taken.clientId, redirectUri: taken.redirectUri, challenge: taken.challenge },
+      CODE_TTL,
+    );
+    const location = new URL(taken.redirectUri);
+    location.searchParams.set('code', code);
+    location.searchParams.set('iss', this.baseUrl);
+    if (taken.state) location.searchParams.set('state', taken.state);
+    return { redirect: location.toString() };
   }
 
   routes(server: FastMCP<Session>) {
@@ -402,6 +476,7 @@ ${error ? `<div class="err">${escape(error)}</div>` : ''}
         'Set-Cookie',
         `${COOKIE}=${cookie}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
       );
+      c.header('Content-Security-Policy', PAGE_CSP);
       return c.html(this.page(transaction, new URL(redirectUri).host));
     });
 
@@ -411,67 +486,24 @@ ${error ? `<div class="err">${escape(error)}</div>` : ''}
       const form = new URLSearchParams(await c.req.text());
       const transactionId = form.get('transaction_id');
       await this.cookieBinding(c.req.header('cookie'), transactionId);
-      const txn = (await this.store.get('mb-txn:' + transactionId)) as Transaction | null;
-      if (!txn) throw new AuthError('invalid_request', 'Sign-in expired; restart from your client');
-      const redirectHost = new URL(txn.redirectUri).host;
-      const retry = (message: string) =>
-        c.html(this.page(transactionId!, redirectHost, message), 400);
-      const parsed = email.safeParse(form.get('email')?.trim().toLowerCase());
-      const password = form.get('password') ?? '';
-      if (!parsed.success || !password || password.length > 4096)
-        return retry('Enter the full email address and the mailbox password.');
-      const address = parsed.data,
-        domain = address.slice(address.lastIndexOf('@') + 1);
-      if (!this.options.secrets.allowedDomains.includes(domain))
-        return retry('This email domain is not allowed on this server.');
-      // Attempts are counted before the provider is contacted: a shared egress IP must never be
-      // locked out by one person's typos. Order: per mailbox, per client IP, then global.
-      const sub = subjectFor(this.options.secrets.encryptionKey, address);
       const ip = (c.req.header('x-forwarded-for')?.split(',')[0] ?? 'unknown').trim().slice(0, 64);
-      try {
-        await rateLimit(this.options.db, sub, 'login', 5, 900);
-        await rateLimit(this.options.db, 'ip:' + ip, 'login', 20, 3600);
-        await rateLimit(this.options.db, 'public', 'login', 120, 3600);
-      } catch {
-        return retry('Too many sign-in attempts. Wait 15 minutes and try again.');
+      // A double-click or an impatient resubmit arrives as parallel POSTs for one transaction.
+      // They all share a single attempt (one rate-limit tick, one provider login) and receive the
+      // same outcome, so the browser's last navigation still carries the authorization code.
+      let run = this.inflight.get(transactionId!);
+      if (!run) {
+        run = this.performLogin(transactionId!, form, ip).finally(() =>
+          this.inflight.delete(transactionId!),
+        );
+        this.inflight.set(transactionId!, run);
       }
-      try {
-        await this.verifyMailbox(accountFor(this.options.secrets, address, password));
-      } catch {
-        return retry('The mail server rejected this email address or password.');
+      const outcome = await run;
+      if ('redirect' in outcome) {
+        c.header('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+        return c.redirect(outcome.redirect, 302);
       }
-      const taken = (await this.store.take('mb-txn:' + transactionId)) as Transaction | null;
-      if (!taken) throw new AuthError('invalid_request', 'Sign-in already completed');
-      const existing = (await this.store.get('mb-user:' + sub)) as UserRecord | null;
-      await this.store.save('mb-user:' + sub, {
-        email: address,
-        sealed: seal(this.options.secrets.encryptionKey, sub, password),
-        createdAt: existing?.createdAt ?? this.now(),
-        lastLoginAt: this.now(),
-      } satisfies UserRecord);
-      this.services.delete(sub);
-      if (!existing) {
-        const users = await this.listUsers();
-        if (!users.some((u) => u.sub === sub))
-          await this.store.save('mb-users', [...users, { sub, email: address }]);
-      }
-      const code = randomBytes(32).toString('base64url');
-      await this.store.save(
-        'mb-code:' + code,
-        {
-          sub,
-          clientId: taken.clientId,
-          redirectUri: taken.redirectUri,
-          challenge: taken.challenge,
-        },
-        CODE_TTL,
-      );
-      const location = new URL(taken.redirectUri);
-      location.searchParams.set('code', code);
-      location.searchParams.set('iss', this.baseUrl);
-      if (taken.state) location.searchParams.set('state', taken.state);
-      c.header('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
-      return c.redirect(location.toString(), 302);
+      c.header('Content-Security-Policy', PAGE_CSP);
+      return c.html(outcome.html, outcome.status as 400);
     });
 
     app.post('/oauth/token', async (c) => {

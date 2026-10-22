@@ -306,6 +306,46 @@ test('sign-in attempts are throttled per mailbox before the provider is contacte
   assert.equal(okay.status, 400, 'carla has no password configured in the synthetic provider');
 });
 
+test('a double-clicked sign-in is one provider attempt and every duplicate gets the same redirect', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const attempts: string[] = [];
+  const { app, auth } = harness(async (a) => {
+    attempts.push(a.username);
+    await gate; // hold the provider so the duplicates really overlap
+  });
+  const flow = await signIn(app, 'dora@mamboo.co.ao', 'pw');
+  const clicks = Promise.all(
+    Array.from({ length: 4 }, () => flow.login({ email: 'dora@mamboo.co.ao', password: 'pw' })),
+  );
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(attempts.length, 1, 'provider contacted once while four POSTs are in flight');
+  release();
+  const responses = await clicks;
+  const locations = responses.map((r) => r.headers.get('location'));
+  assert.ok(
+    responses.every((r) => r.status === 302),
+    'all duplicates redirect',
+  );
+  assert.equal(new Set(locations).size, 1, 'all carry the same authorization code');
+  assert.equal(attempts.length, 1);
+  const { tokens } = await exchange(flow, responses[0]!);
+  assert.ok(tokens.access_token);
+  // The duplicates consumed one rate-limit tick: four more sign-ins pass, the sixth is throttled.
+  for (let i = 0; i < 4; i++) {
+    const again = await signIn(app, 'dora@mamboo.co.ao', 'pw');
+    assert.equal((await again.login({ email: 'dora@mamboo.co.ao', password: 'pw' })).status, 302);
+  }
+  const sixth = await signIn(app, 'dora@mamboo.co.ao', 'pw');
+  const throttled = await sixth.login({ email: 'dora@mamboo.co.ao', password: 'pw' });
+  assert.equal(throttled.status, 400);
+  assert.match(await throttled.text(), /Too many sign-in attempts/);
+  assert.equal(attempts.length, 5);
+  assert.deepEqual(await auth.listUsers(), [
+    { sub: subjectFor(secrets.encryptionKey, 'dora@mamboo.co.ao'), email: 'dora@mamboo.co.ao' },
+  ]);
+});
+
 test('authorize rejects unknown clients, unregistered redirects, weak PKCE and foreign resources', async () => {
   const { app } = harness(async () => {});
   const reg = await app.request(base + '/oauth/register', {

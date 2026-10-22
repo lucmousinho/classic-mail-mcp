@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 const base = 'https://mail.example.com';
 async function start(port: number, configured: boolean) {
@@ -202,8 +203,14 @@ test('mailbox mode: discovery, locked tools, sign-in page reachable through the 
     const html = await page.text();
     assert.match(html, /Mamboo Mail/);
     assert.match(html, /claude\.ai/);
-    assert.doesNotMatch(html, /<script/);
-    assert.match(page.headers.get('content-security-policy') ?? '', /default-src 'none'/);
+    // The only script is the button guard, allowed by hash; the gateway CSP is overridden for this page.
+    const csp = page.headers.get('content-security-policy') ?? '';
+    assert.match(csp, /default-src 'none'/);
+    const hash = csp.match(/script-src 'sha256-([^']+)'/)?.[1];
+    assert.ok(hash, 'page CSP carries a script hash');
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? '';
+    assert.equal(createHash('sha256').update(script).digest('base64'), hash);
+    assert.equal((html.match(/<script/g) ?? []).length, 1);
   } finally {
     child.kill();
   }
