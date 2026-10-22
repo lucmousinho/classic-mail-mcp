@@ -8,7 +8,7 @@
 #   CONFIG_FILE    /opt/classic-mail/config.json     (gerado pelo scripts/setup.py --mode mailbox)
 #   AUTH_MODE      mailbox (multiusuário) | oauth (um operador, login Google)
 #   ACCESS_MODE    read-only | read-write
-#   BIND_PORT      8080                              (porta local que o proxy vai usar)
+#   BIND_PORT      18080                             (porta local que o proxy vai usar; 8080 costuma estar ocupada)
 #
 # Se o proxy roda em outro container (ex.: Nginx Proxy Manager), prefira trocar o bloco "ports"
 # por uma rede compartilhada com ele, como no stack-traefik.yml, e aponte o NPM para
@@ -24,7 +24,7 @@ services:
     security_opt: [no-new-privileges:true]
     tmpfs: [/tmp:size=32m, mode=1777]
     ports:
-      - '127.0.0.1:${BIND_PORT:-8080}:8080'
+      - '127.0.0.1:${BIND_PORT:-18080}:8080'
     volumes:
       - ${CONFIG_FILE:-/opt/classic-mail/config.json}:/run/secrets/mail-config.json:ro
       - classic_mail_data:/data

@@ -1,0 +1,96 @@
+# Classic Mail MCP · stack para Portainer em DOCKER SWARM (docker stack deploy).
+#
+# Diferenças em relação aos stacks standalone:
+#   - Swarm não suporta container_name, restart e security_opt (eles ficam em deploy.*).
+#   - Swarm ignora o IP de bind da porta. Aqui a porta é publicada em modo "host" (só no nó onde a
+#     tarefa roda, sem passar pelo ingress) para que o Nginx instalado no host alcance o serviço em
+#     127.0.0.1:${BIND_PORT}. A porta também fica visível nas outras interfaces do host: o serviço
+#     foi desenhado para isso não bastar (login só completa pela origem HTTPS de BASE_URL e todo
+#     /mcp exige token), mas bloqueie a porta no firewall da nuvem/VPS se puder.
+#   - A configuração vem de um Docker Secret criado pela interface do Portainer, não de arquivo no host.
+#
+# Antes de criar o stack: Portainer > Secrets > Add secret
+#   Name:   classic_mail_config
+#   Secret: o conteúdo completo de .secrets/config.json gerado por `scripts/setup.py --mode mailbox`
+#
+# Variáveis do stack (aba "Environment variables"):
+#   IMAGE        ghcr.io/lucmousinho/classic-mail-mcp:latest
+#   BASE_URL     https://classic-mail.mcp.mambootech.com   (origem HTTPS pública, sem barra final)
+#   AUTH_MODE    mailbox
+#   ACCESS_MODE  read-write | read-only
+#   BIND_PORT    18080   (porta livre no host; 8080 costuma estar ocupada; o Nginx aponta para ela)
+#
+# Em um swarm com vários nós, fixe o serviço no nó onde o Nginx roda:
+#   deploy.placement.constraints: ['node.hostname == NOME-DO-NO']
+services:
+  classic-mail:
+    image: ${IMAGE:-ghcr.io/lucmousinho/classic-mail-mcp:latest}
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    ports:
+      - target: 8080
+        published: ${BIND_PORT:-18080}
+        protocol: tcp
+        mode: host
+    volumes:
+      - type: volume
+        source: classic_mail_data
+        target: /data
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 33554432
+    secrets:
+      - source: classic_mail_config
+        target: classic_mail_config
+        uid: '1000'
+        gid: '1000'
+        mode: 0400
+    environment:
+      TRANSPORT: http
+      AUTH_MODE: ${AUTH_MODE:-mailbox}
+      ACCESS_MODE: ${ACCESS_MODE:-read-write}
+      BASE_URL: ${BASE_URL}
+      APP_CONFIG_FILE: /run/secrets/classic_mail_config
+      HOST: 0.0.0.0
+      PORT: 8080
+      STORAGE: sqlite
+      SQLITE_PATH: /data/mail.sqlite
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    stop_grace_period: 15s
+    deploy:
+      mode: replicated
+      replicas: 1
+      # Porta em modo host não pode ser ocupada duas vezes: pare a tarefa antiga antes de subir a nova.
+      update_config:
+        order: stop-first
+        failure_action: rollback
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 60s
+      resources:
+        limits:
+          memory: 512M
+      placement:
+        constraints:
+          - node.role == manager
+
+volumes:
+  classic_mail_data:
+
+secrets:
+  classic_mail_config:
+    external: true

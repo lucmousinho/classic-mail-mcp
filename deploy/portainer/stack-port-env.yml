@@ -10,7 +10,7 @@
 #   APP_CONFIG_JSON  {"allowedDomains":[...],...}              (linha única impressa pelo wizard)
 #   AUTH_MODE        mailbox
 #   ACCESS_MODE      read-write | read-only
-#   BIND_PORT        8080                                      (porta em 127.0.0.1 que o Nginx do host usa)
+#   BIND_PORT        18080                                     (porta em 127.0.0.1 que o Nginx do host usa)
 services:
   classic-mail:
     image: ${IMAGE:-ghcr.io/lucmousinho/classic-mail-mcp:latest}
@@ -22,7 +22,7 @@ services:
     security_opt: [no-new-privileges:true]
     tmpfs: [/tmp:size=32m, mode=1777]
     ports:
-      - '127.0.0.1:${BIND_PORT:-8080}:8080'
+      - '127.0.0.1:${BIND_PORT:-18080}:8080'
     volumes:
       - classic_mail_data:/data
     environment:

@@ -26,9 +26,11 @@ O wizard grava `.secrets/config.json` (permissão 600) e, por causa do `--print-
 
 Não troque as chaves depois: `encryptionKey` é o que abre as credenciais cifradas (trocar obriga todos a logarem de novo) e `jwtSigningKey` assina os tokens. Guarde o `.secrets/config.json` em lugar seguro como cópia.
 
-## 2. Sem acesso SSH/SCP ao servidor
+## 2. Standalone ou Swarm? Como saber
 
-Tudo o que o servidor precisa chega por variáveis de ambiente do stack: nenhum arquivo é copiado para o host. Se um dia você tiver shell no host e preferir arquivo, use `deploy/portainer/stack-port.yml` com `CONFIG_FILE` apontando para `/opt/classic-mail/config.json` (modo 600, dono UID 1000); o conteúdo é o mesmo.
+Portainer > Environments. Se o ambiente aparece como **Swarm** (ou o deploy reclamou de `container_name`, `restart`, `security_opt` e de porta "already in use ... as an ingress port"), use o stack `stack-swarm.yml` e a configuração vai como **Secret**. Se aparece como **Standalone**, use `stack-port-env.yml` com a configuração na variável `APP_CONFIG_JSON`. Nenhum dos dois precisa de arquivo no host nem de SSH.
+
+Em Swarm, crie o secret antes do stack: **Secrets > Add secret**, Name `classic_mail_config`, campo Secret = o conteúdo completo de `.secrets/config.json` (o JSON formatado em várias linhas, exatamente como o wizard gravou). O Portainer não mostra o valor de novo depois de criado; guarde o arquivo local como cópia.
 
 ## 3. Nginx no host e certificado (5 minutos, com o DNS já respondendo)
 
@@ -47,7 +49,7 @@ sudo certbot renew --dry-run
 grep -n "proxy_read_timeout\|proxy_buffering\|listen 443" /etc/nginx/sites-available/classic-mail.mcp.mambootech.com
 ```
 
-O que o arquivo garante: `proxy_pass http://127.0.0.1:8080` (o stack prende o container ao loopback, só o Nginx chega nele), `proxy_read_timeout 135s` (chamadas podem levar até 125 s), `proxy_buffering off` e `proxy_cache off` (Streamable HTTP), `proxy_intercept_errors off` (o `401` do servidor leva o ponteiro de descoberta OAuth que o Claude precisa ler), `client_max_body_size 13m` (anexos). No `ufw` só 80 e 443 ficam abertos.
+O que o arquivo garante: `proxy_pass http://127.0.0.1:18080` (a porta `BIND_PORT` do stack), `proxy_read_timeout 135s` (chamadas podem levar até 125 s), `proxy_buffering off` e `proxy_cache off` (Streamable HTTP), `proxy_intercept_errors off` (o `401` do servidor leva o ponteiro de descoberta OAuth que o Claude precisa ler), `client_max_body_size 13m` (anexos). No `ufw` só 80 e 443 ficam abertos.
 
 ## 4. Stack no Portainer (3 minutos)
 
@@ -55,22 +57,34 @@ Stacks > **Add stack** > nome `classic-mail` > **Repository**:
 
 - Repository URL: `https://github.com/lucmousinho/classic-mail-mcp`
 - Reference: `refs/heads/main`
-- Compose path: `deploy/portainer/stack-port-env.yml`
+- Compose path: **`deploy/portainer/stack-swarm.yml`** (Swarm) ou `deploy/portainer/stack-port-env.yml` (Standalone)
 
-Environment variables (clique em **Advanced mode** e cole as linhas; a última é a que o wizard imprimiu):
+Environment variables (**Advanced mode**):
+
+Swarm (configuração já está no secret `classic_mail_config`):
 
 ```
 IMAGE=ghcr.io/lucmousinho/classic-mail-mcp:latest
 BASE_URL=https://classic-mail.mcp.mambootech.com
 AUTH_MODE=mailbox
 ACCESS_MODE=read-write
-BIND_PORT=8080
-APP_CONFIG_JSON={"allowedDomains":["mamboo.co.ao","mamboo.co.tz","mambootech.com"],"provider":{...},"displayName":"Mamboo Mail","jwtSigningKey":"...","encryptionKey":"...","consentSigningKey":"..."}
+BIND_PORT=18080
 ```
 
-A linha `APP_CONFIG_JSON` precisa ficar em **uma linha só**, exatamente como impressa, sem aspas em volta. `ACCESS_MODE=read-write` libera leitura e envio (21 ferramentas); `read-only` deixa só 6.
+Standalone (acrescente a linha que `--print-env` imprimiu):
 
-**Deploy the stack**. Em Containers, `classic-mail-mcp` fica _healthy_ em menos de um minuto. Se reiniciar em loop, veja os logs do container no Portainer: "Classic Mail could not start" significa `APP_CONFIG_JSON` quebrada ou `BASE_URL` inválida.
+```
+IMAGE=ghcr.io/lucmousinho/classic-mail-mcp:latest
+BASE_URL=https://classic-mail.mcp.mambootech.com
+AUTH_MODE=mailbox
+ACCESS_MODE=read-write
+BIND_PORT=18080
+APP_CONFIG_JSON={"allowedDomains":[...],"provider":{...},"displayName":"Mamboo Mail","jwtSigningKey":"...","encryptionKey":"...","consentSigningKey":"..."}
+```
+
+`BIND_PORT` é a porta do host que o Nginx usa em `proxy_pass`; 18080 porque a 8080 costuma estar ocupada por outro serviço (no Swarm o erro é "port '8080' is already in use ... as an ingress port"). `ACCESS_MODE=read-write` libera leitura e envio (21 ferramentas); `read-only` deixa só 6. No Swarm com mais de um nó, fixe o serviço no nó do Nginx editando `deploy.placement.constraints` para `node.hostname == NOME-DO-NO`.
+
+**Deploy the stack**. Em Containers (ou Services, no Swarm), a tarefa `classic-mail` fica _healthy_ em menos de um minuto. Se reiniciar em loop, veja os logs do container no Portainer: "Classic Mail could not start" significa `APP_CONFIG_JSON` quebrada ou `BASE_URL` inválida.
 
 Teste pelo terminal:
 
@@ -111,17 +125,19 @@ Observações para repassar à equipe:
 Listar quem já se conectou e remover alguém (remoção apaga a credencial cifrada e revoga todos os tokens na hora):
 
 ```sh
-docker exec classic-mail-mcp node dist/users-cli.js list
-docker exec classic-mail-mcp node dist/users-cli.js remove pessoa@mamboo.co.ao
+# Portainer > Containers > (tarefa classic-mail) > Console, ou pelo shell do host:
+node dist/users-cli.js list
+node dist/users-cli.js remove pessoa@mamboo.co.ao
 ```
 
 Outras rotinas:
 
-- **Backup**: volume `classic_mail_data` (SQLite com usuários cifrados, sessões e histórico de envio) mais a linha `APP_CONFIG_JSON` (ou o `.secrets/config.json` que o wizard gravou). Sem as chaves o banco não abre.
+- **Backup**: volume `classic_mail_data` (SQLite com usuários cifrados, sessões e histórico de envio) mais o `.secrets/config.json` que o wizard gravou (é o conteúdo do secret/variável). Sem as chaves o banco não abre.
 - **Atualizar**: push na `main` publica nova imagem; no Portainer, **Re-pull image and redeploy**.
-- **Adicionar um domínio ou mudar pasta**: edite a variável `APP_CONFIG_JSON` no stack (só o trecho necessário, mantendo as três chaves iguais) e clique em **Update the stack**.
+- **Adicionar um domínio ou mudar pasta**: Standalone, edite `APP_CONFIG_JSON` no stack e **Update the stack**. Swarm: secrets são imutáveis; crie `classic_mail_config_v2` com o JSON novo (mesmas três chaves), troque o nome em `secrets:` no stack (ou aponte `source:` para o novo) e atualize o stack.
 - **Alternar leitura/escrita**: mude `ACCESS_MODE` no stack e **Update the stack**; as pessoas usam **Reconectar** no Claude para a lista de ferramentas atualizar.
 - **Logs**: só eventos (`mcp_auth_rejected` com o estágio), nunca senhas, tokens ou conteúdo de email.
+- **Porta 18080 exposta** (Swarm publica em todas as interfaces): o servidor não completa login nem atende `/mcp` fora da origem HTTPS, mas bloqueie a porta no firewall da nuvem/VPS quando possível; `ufw` não cobre portas publicadas pelo Docker.
 - **Limites**: 120 chamadas por minuto por pessoa, 30 envios por hora por pessoa, 4 conexões IMAP simultâneas por pessoa, anexos até 4 MiB, mensagens até 8 MiB.
 
 ## Problemas comuns
