@@ -16,9 +16,6 @@
       "imapPort": 993,
       "smtpHost": "smtp.dreamhost.com",
       "smtpPort": 587,
-      "sentFolder": "Sent",
-      "draftsFolder": "Drafts",
-      "trashFolder": "Trash",
       "appendSent": true
     }
   ]

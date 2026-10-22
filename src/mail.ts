@@ -424,16 +424,24 @@ export class MailService {
   }
   async special(c: ImapFlow, a: Account, type: 'sent' | 'drafts' | 'trash' | 'archive') {
     const configured = a[`${type}Folder`];
-    if (configured) {
+    const folders = await c.list();
+    // A configured name wins when it exists. When it does not (a provider that prefixes
+    // special folders with "INBOX.", for example), fall back to the server's SPECIAL-USE
+    // advertisement instead of failing every send and draft with a mystery path.
+    if (configured && folders.some((f) => f.path === configured)) {
       this.allowed(a.id, configured);
       return configured;
     }
     const flag = { sent: '\\Sent', drafts: '\\Drafts', trash: '\\Trash', archive: '\\Archive' }[
       type
     ];
-    const folders = await c.list(),
-      match = folders.find((f) => f.specialUse === flag);
-    if (!match) throw new MailError(`No ${type} folder discovered; configure it explicitly`);
+    const match = folders.find((f) => f.specialUse === flag);
+    if (!match)
+      throw new MailError(
+        configured
+          ? `Configured ${type} folder does not exist and none is advertised by the server`
+          : `No ${type} folder discovered; configure it explicitly`,
+      );
     this.allowed(a.id, match.path);
     return match.path;
   }

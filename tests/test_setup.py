@@ -43,7 +43,7 @@ class SetupTests(unittest.TestCase):
             try:
                 os.chdir(tmp)
                 # Empty answers accept each default: DreamHost hosts, 993/587, standard folder names.
-                answers = ["1", "", "", "contato@example.com", "", "", "", "", "", "", "", "", "", "no"]
+                answers = ["1", "", "", "contato@example.com", "", "", "", "", "", "", "no"]
                 with patch("sys.argv", ["setup.py"]), patch("builtins.input", side_effect=answers), patch("getpass.getpass", return_value="hidden-test-value"), contextlib.redirect_stdout(io.StringIO()):
                     setup.main()
                 account = json.loads(Path(".secrets/config.json").read_text())["accounts"][0]
@@ -52,7 +52,7 @@ class SetupTests(unittest.TestCase):
                 self.assertEqual(account["smtpHost"], "smtp.dreamhost.com")
                 self.assertEqual(account["smtpPort"], 587)
                 self.assertEqual(account["username"], "contato@example.com")
-                self.assertEqual((account["sentFolder"], account["draftsFolder"], account["trashFolder"]), ("Sent", "Drafts", "Trash"))
+                self.assertNotIn("sentFolder", account, "DreamHost folders are discovered via SPECIAL-USE")
                 self.assertTrue(account["appendSent"])
             finally:
                 os.chdir(previous)
@@ -62,14 +62,14 @@ class SetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             try:
                 os.chdir(tmp)
-                answers = ["Mamboo.co.ao, mambootech.com", "", "", "", "", "", "", "", "", "", "Mamboo Mail"]
+                answers = ["Mamboo.co.ao, mambootech.com", "", "", "", "", "", "", "Mamboo Mail"]
                 with patch("sys.argv", ["setup.py", "--mode", "mailbox"]), patch("builtins.input", side_effect=answers), patch("getpass.getpass", side_effect=AssertionError("no password prompt expected")), contextlib.redirect_stdout(io.StringIO()):
                     setup.main()
                 config = json.loads(Path(".secrets/config.json").read_text())
                 self.assertEqual(config["allowedDomains"], ["mamboo.co.ao", "mambootech.com"])
                 self.assertEqual(config["provider"]["imapHost"], "imap.dreamhost.com")
                 self.assertEqual(config["provider"]["smtpPort"], 587)
-                self.assertEqual(config["provider"]["sentFolder"], "Sent")
+                self.assertNotIn("sentFolder", config["provider"])
                 self.assertEqual(config["displayName"], "Mamboo Mail")
                 self.assertNotIn("accounts", config)
                 self.assertEqual(len({config["jwtSigningKey"], config["encryptionKey"], config["consentSigningKey"]}), 3)

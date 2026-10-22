@@ -6,13 +6,13 @@ The server works with any IMAP/SMTP provider that accepts password or app-passwo
 
 Values from DreamHost's [email client configuration overview](https://help.dreamhost.com/hc/en-us/articles/214918038):
 
-| Setting   | Value                                                                       |
-| --------- | --------------------------------------------------------------------------- |
-| IMAP host | `imap.dreamhost.com`, port 993 (implicit TLS)                               |
-| SMTP host | `smtp.dreamhost.com`, port 587 (STARTTLS, the setting DreamHost recommends) |
-| Username  | the full address usually works; DreamHost documents the local part          |
-| Password  | the mailbox password set on the panel's **Manage Email** page               |
-| Folders   | `Sent`, `Drafts`, `Trash` (older mailboxes may use an `INBOX.` prefix)      |
+| Setting   | Value                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------- |
+| IMAP host | `imap.dreamhost.com`, port 993 (implicit TLS)                                                           |
+| SMTP host | `smtp.dreamhost.com`, port 587 (STARTTLS, the setting DreamHost recommends)                             |
+| Username  | the full address usually works; DreamHost documents the local part                                      |
+| Password  | the mailbox password set on the panel's **Manage Email** page                                           |
+| Folders   | advertised via SPECIAL-USE; paths are usually `INBOX.Sent`, `INBOX.Drafts`, `INBOX.Trash`, `INBOX.Spam` |
 
 Wizard preset: `python3 scripts/setup.py --mode oauth` and answer `dreamhost` at the provider prompt; every default can still be edited.
 
@@ -21,7 +21,7 @@ Things to keep in mind:
 - **Failed logins block your IP temporarily.** DreamHost blocks an address after several wrong passwords. Run `check_connection` once after each configuration change instead of retrying blindly; if a block happens it lifts on its own or DreamHost support can clear it.
 - **Port 465 also works** on `smtp.dreamhost.com` if your network blocks 587. This server requires STARTTLS on 587 and never downgrades, so either port is safe.
 - **Sending quotas apply.** DreamHost limits outbound mail per hour per account; the server's idempotency ledger prevents duplicate sends on retries but cannot raise the quota.
-- **Folder names**: after the first connection, ask your agent to list folders and compare with the configured `sentFolder`, `draftsFolder` and `trashFolder`. Fix the names in `config.json` and restart the container if they differ.
+- **Folder names**: leave `sentFolder`, `draftsFolder` and `trashFolder` unset for DreamHost. Mailboxes advertise the special folders (`\\Sent`, `\\Drafts`, `\\Trash`) and the server discovers the right path per mailbox, which matters because some DreamHost mailboxes use the `INBOX.` prefix and others do not. A configured name that does not exist on a mailbox falls back to discovery.
 - The IMAP username is the full address (`name@example.com`), not the panel login.
 
 ## Other providers

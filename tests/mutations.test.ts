@@ -296,3 +296,28 @@ test('reject reused crypto keys in deployment configuration', () => {
     }),
   );
 });
+test('special folders: configured name wins when present, SPECIAL-USE fallback when the provider prefixes paths', async () => {
+  const listing = [
+    { path: 'INBOX', specialUse: '\\Inbox' },
+    { path: 'INBOX.Sent', specialUse: '\\Sent' },
+    { path: 'INBOX.Drafts', specialUse: '\\Drafts' },
+    { path: 'Sent' },
+  ];
+  const c = Object.assign(fakeImap(), { list: async () => listing });
+  const prefixed = new MailService(
+    [{ ...account, sentFolder: 'Sent', draftsFolder: 'Drafts', trashFolder: 'Trash' }],
+    () => c,
+  );
+  const access = prefixed as unknown as {
+    special: (c: unknown, a: unknown, t: string) => Promise<string>;
+  };
+  const a = (prefixed as unknown as { accounts: unknown[] }).accounts[0];
+  assert.equal(await access.special(c, a, 'sent'), 'Sent', 'configured folder exists: used as is');
+  assert.equal(
+    await access.special(c, a, 'drafts'),
+    'INBOX.Drafts',
+    'missing Drafts: SPECIAL-USE wins',
+  );
+  await assert.rejects(access.special(c, a, 'trash'), /Configured trash folder does not exist/);
+  await assert.rejects(access.special(c, a, 'archive'), /No archive folder discovered/);
+});

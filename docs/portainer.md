@@ -13,14 +13,13 @@ git clone https://github.com/lucmousinho/classic-mail-mcp.git && cd classic-mail
 python3 scripts/setup.py --mode mailbox --print-env
 ```
 
-| Pergunta                                | Resposta                                                                     |
-| --------------------------------------- | ---------------------------------------------------------------------------- |
-| Allowed email domains                   | `mamboo.co.ao,mamboo.co.tz,mambootech.com`                                   |
-| Provider preset                         | `dreamhost`                                                                  |
-| IMAP/SMTP hostname e port               | Enter em todos (`imap.dreamhost.com` 993, `smtp.dreamhost.com` 587 STARTTLS) |
-| Append sent mail to IMAP?               | `yes`                                                                        |
-| sentFolder / draftsFolder / trashFolder | Enter, Enter, Enter (`Sent`, `Drafts`, `Trash`)                              |
-| Name shown on the sign-in page          | `Mamboo Mail` (ou o nome que a equipe reconhece)                             |
+| Pergunta                       | Resposta                                                                     |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| Allowed email domains          | `mamboo.co.ao,mamboo.co.tz,mambootech.com`                                   |
+| Provider preset                | `dreamhost`                                                                  |
+| IMAP/SMTP hostname e port      | Enter em todos (`imap.dreamhost.com` 993, `smtp.dreamhost.com` 587 STARTTLS) |
+| Append sent mail to IMAP?      | `yes`                                                                        |
+| Name shown on the sign-in page | `Mamboo Mail` (ou o nome que a equipe reconhece)                             |
 
 O wizard grava `.secrets/config.json` (permissão 600) e, por causa do `--print-env`, imprime no final uma linha única começando com `APP_CONFIG_JSON=`. Essa linha é a configuração inteira: domínios, provedor e três chaves aleatórias. Não há nenhuma senha dentro, mas as chaves são segredo (assinam tokens e cifram as credenciais de todo mundo). Copie a linha; ela vai para o Portainer no passo 4.
 
@@ -111,7 +110,7 @@ Para contas individuais (sem Team), cada pessoa faz os mesmos passos em Configur
 1. Configurações > Conectores > `Email empresarial` > **Conectar**.
 2. Abre a página do servidor (`Mamboo Mail`), que informa o que o assistente poderá fazer e que o retorno será para `claude.ai`. A pessoa digita o **endereço completo** e a **senha da caixa** (a mesma do webmail/Outlook).
 3. O servidor confere na DreamHost e volta para o Claude. Pronto.
-4. No chat, com o conector ativo: "liste as contas", "mostre as cinco mensagens mais recentes da INBOX sem marcar como lidas", "liste as pastas" (para confirmar `Sent`/`Drafts`/`Trash`).
+4. No chat, com o conector ativo: "liste as contas", "mostre as cinco mensagens mais recentes da INBOX sem marcar como lidas", "liste as pastas". As pastas especiais são descobertas por caixa (na DreamHost costumam ser `INBOX.Sent`, `INBOX.Drafts`, `INBOX.Trash`).
 
 Observações para repassar à equipe:
 
@@ -134,7 +133,7 @@ Outras rotinas:
 
 - **Backup**: volume `classic_mail_data` (SQLite com usuários cifrados, sessões e histórico de envio) mais o `.secrets/config.json` que o wizard gravou (é o conteúdo do secret/variável). Sem as chaves o banco não abre.
 - **Atualizar**: push na `main` publica nova imagem; no Portainer, **Re-pull image and redeploy**.
-- **Adicionar um domínio ou mudar pasta**: Standalone, edite `APP_CONFIG_JSON` no stack e **Update the stack**. Swarm: secrets são imutáveis; crie `classic_mail_config_v2` com o JSON novo (mesmas três chaves), troque o nome em `secrets:` no stack (ou aponte `source:` para o novo) e atualize o stack.
+- **Adicionar um domínio**: Standalone, edite `APP_CONFIG_JSON` no stack e **Update the stack**. Swarm: secrets são imutáveis; crie `classic_mail_config_v2` com o JSON novo (mesmas três chaves), troque o nome em `secrets:` no stack (ou aponte `source:` para o novo) e atualize o stack.
 - **Alternar leitura/escrita**: mude `ACCESS_MODE` no stack e **Update the stack**; as pessoas usam **Reconectar** no Claude para a lista de ferramentas atualizar.
 - **Logs**: só eventos (`mcp_auth_rejected` com o estágio), nunca senhas, tokens ou conteúdo de email.
 - **Porta 18080 exposta** (Swarm publica em todas as interfaces): o servidor não completa login nem atende `/mcp` fora da origem HTTPS, mas bloqueie a porta no firewall da nuvem/VPS quando possível; `ufw` não cobre portas publicadas pelo Docker.
@@ -149,7 +148,7 @@ Outras rotinas:
 | Página de login diz "domain is not allowed"          | Domínio fora de `allowedDomains`                                                                                                                             |
 | Página diz "rejected this email address or password" | Senha errada, ou IP do servidor temporariamente bloqueado pela DreamHost após falhas em sequência                                                            |
 | Página diz "Too many sign-in attempts"               | 5 tentativas em 15 min para aquela caixa (ou 20 por IP de origem na hora); espere                                                                            |
-| Enviou mas não apareceu em `Sent`                    | Nome da pasta diferente na caixa; ajuste `sentFolder` em `APP_CONFIG_JSON` e atualize o stack                                                                |
+| Enviou mas não apareceu em `Sent`                    | A caixa não anuncia a pasta especial `\Sent`; peça "liste as pastas" e configure `sentFolder` com o caminho exato (ex.: `INBOX.Sent`)                        |
 | Container reinicia em loop                           | `APP_CONFIG_JSON` quebrada (quebra de linha, aspas em volta) ou `BASE_URL` sem `https://`; veja os logs do container no Portainer                            |
 | Alguém perdeu o acesso de repente                    | Foi removido com `users-cli remove`, ou `encryptionKey`/`jwtSigningKey` mudou; basta Conectar de novo                                                        |
 

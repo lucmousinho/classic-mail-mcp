@@ -26,8 +26,9 @@ def write_private(path, content):
 # Provider presets only fill the prompts' defaults; every value can still be changed.
 # Hostnames come from each provider's own documentation (see docs/providers.md).
 PRESETS = {
-    "dreamhost": dict(imap="imap.dreamhost.com", imap_port=993, smtp="smtp.dreamhost.com", smtp_port=587,
-                      folders=dict(sentFolder="Sent", draftsFolder="Drafts", trashFolder="Trash")),
+    # DreamHost advertises SPECIAL-USE (\\Sent, \\Drafts, \\Trash) and prefixes the paths with
+    # "INBOX." on most mailboxes, so folders are discovered per mailbox instead of fixed here.
+    "dreamhost": dict(imap="imap.dreamhost.com", imap_port=993, smtp="smtp.dreamhost.com", smtp_port=587, folders={}),
     "custom": dict(imap="", imap_port=993, smtp="", smtp_port=465, folders={}),
 }
 
