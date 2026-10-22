@@ -206,6 +206,8 @@ test('mailbox mode: discovery, locked tools, sign-in page reachable through the 
     // The only script is the button guard, allowed by hash; the gateway CSP is overridden for this page.
     const csp = page.headers.get('content-security-policy') ?? '';
     assert.match(csp, /default-src 'none'/);
+    // The 302 after the form POST goes to the client's callback: form-action must allow that origin.
+    assert.match(csp, /form-action 'self' https:\/\/claude\.ai;/);
     const hash = csp.match(/script-src 'sha256-([^']+)'/)?.[1];
     assert.ok(hash, 'page CSP carries a script hash');
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? '';

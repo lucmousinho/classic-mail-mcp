@@ -59,15 +59,26 @@ type Transaction = {
 };
 type UserRecord = { email: string; sealed: string; createdAt: number; lastLoginAt: number };
 type Grant = { sub: string; clientId: string };
-type LoginOutcome = { redirect: string } | { html: string; status: number };
+type LoginOutcome = { redirect: string } | { html: string; status: number; csp: string };
 
-/** Disables the submit button on first click; a second click is ignored. Allowed by hash in PAGE_CSP. */
+/** Disables the submit button on first click; a second click is ignored. Allowed by hash in pageCsp. */
 const PAGE_SCRIPT =
   "document.forms[0].addEventListener('submit',function(e){var b=this.querySelector('button');if(b.disabled){e.preventDefault();return}b.disabled=true;b.textContent='Signing in\u2026'})";
-const PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-" +
-  createHash('sha256').update(PAGE_SCRIPT).digest('base64') +
-  "'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+const SCRIPT_HASH = createHash('sha256').update(PAGE_SCRIPT).digest('base64');
+/**
+ * CSP for the sign-in page. Browsers apply `form-action` to the redirect that follows a form
+ * submission too, so the one callback origin of this transaction is allowed next to 'self';
+ * otherwise Chrome silently stops the 302 back to the client and the person stays on the page.
+ */
+function pageCsp(redirectUri: string) {
+  return (
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-" +
+    SCRIPT_HASH +
+    "'; form-action 'self' " +
+    new URL(redirectUri).origin +
+    "; base-uri 'none'; frame-ancestors 'none'"
+  );
+}
 
 export type MailboxAuthOptions = {
   baseUrl: string;
@@ -313,6 +324,7 @@ ${error ? `<div class="err">${escape(error)}</div>` : ''}
     const retry = (message: string): LoginOutcome => ({
       html: this.page(transactionId, redirectHost, message),
       status: 400,
+      csp: pageCsp(txn.redirectUri),
     });
     const parsed = email.safeParse(form.get('email')?.trim().toLowerCase());
     const password = form.get('password') ?? '';
@@ -476,7 +488,7 @@ ${error ? `<div class="err">${escape(error)}</div>` : ''}
         'Set-Cookie',
         `${COOKIE}=${cookie}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
       );
-      c.header('Content-Security-Policy', PAGE_CSP);
+      c.header('Content-Security-Policy', pageCsp(redirectUri));
       return c.html(this.page(transaction, new URL(redirectUri).host));
     });
 
@@ -502,7 +514,7 @@ ${error ? `<div class="err">${escape(error)}</div>` : ''}
         c.header('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
         return c.redirect(outcome.redirect, 302);
       }
-      c.header('Content-Security-Policy', PAGE_CSP);
+      c.header('Content-Security-Policy', outcome.csp);
       return c.html(outcome.html, outcome.status as 400);
     });
 
