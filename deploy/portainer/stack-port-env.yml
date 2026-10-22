@@ -1,0 +1,53 @@
+# Classic Mail MCP · stack para Portainer SEM acesso shell/SCP ao host.
+# A configuração inteira vai na variável APP_CONFIG_JSON do stack (gerada por
+# `python3 scripts/setup.py --mode mailbox --print-env`). No modo mailbox ela não contém nenhuma
+# senha de caixa: só domínios permitidos, provedor e as chaves do servidor. Ainda assim é segredo:
+# quem administra o Portainer consegue vê-la.
+#
+# Variáveis do stack (aba "Environment variables" > Advanced mode):
+#   IMAGE            ghcr.io/lucmousinho/classic-mail-mcp:latest
+#   BASE_URL         https://classic-mail.mcp.mambootech.com   (origem HTTPS pública, sem barra final)
+#   APP_CONFIG_JSON  {"allowedDomains":[...],...}              (linha única impressa pelo wizard)
+#   AUTH_MODE        mailbox
+#   ACCESS_MODE      read-write | read-only
+#   BIND_PORT        8080                                      (porta em 127.0.0.1 que o Nginx do host usa)
+services:
+  classic-mail:
+    image: ${IMAGE:-ghcr.io/lucmousinho/classic-mail-mcp:latest}
+    container_name: classic-mail-mcp
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:size=32m, mode=1777]
+    ports:
+      - '127.0.0.1:${BIND_PORT:-8080}:8080'
+    volumes:
+      - classic_mail_data:/data
+    environment:
+      TRANSPORT: http
+      AUTH_MODE: ${AUTH_MODE:-mailbox}
+      ACCESS_MODE: ${ACCESS_MODE:-read-write}
+      BASE_URL: ${BASE_URL}
+      APP_CONFIG_JSON: ${APP_CONFIG_JSON}
+      HOST: 0.0.0.0
+      PORT: 8080
+      STORAGE: sqlite
+      SQLITE_PATH: /data/mail.sqlite
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    stop_grace_period: 15s
+
+volumes:
+  classic_mail_data:

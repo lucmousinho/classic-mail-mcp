@@ -10,7 +10,7 @@ Pré-requisitos: host Ubuntu com Docker gerenciado pelo Portainer (standalone), 
 
 ```sh
 git clone https://github.com/lucmousinho/classic-mail-mcp.git && cd classic-mail-mcp
-python3 scripts/setup.py --mode mailbox
+python3 scripts/setup.py --mode mailbox --print-env
 ```
 
 | Pergunta                                | Resposta                                                                     |
@@ -22,23 +22,13 @@ python3 scripts/setup.py --mode mailbox
 | sentFolder / draftsFolder / trashFolder | Enter, Enter, Enter (`Sent`, `Drafts`, `Trash`)                              |
 | Name shown on the sign-in page          | `Mamboo Mail` (ou o nome que a equipe reconhece)                             |
 
-Sai `.secrets/config.json` (permissão 600) com os domínios, o provedor e três chaves aleatórias. Não há nenhuma senha dentro. Não troque as chaves depois: `encryptionKey` é o que abre as credenciais cifradas de todo mundo (trocar obriga todos a logarem de novo) e `jwtSigningKey` assina os tokens.
+O wizard grava `.secrets/config.json` (permissão 600) e, por causa do `--print-env`, imprime no final uma linha única começando com `APP_CONFIG_JSON=`. Essa linha é a configuração inteira: domínios, provedor e três chaves aleatórias. Não há nenhuma senha dentro, mas as chaves são segredo (assinam tokens e cifram as credenciais de todo mundo). Copie a linha; ela vai para o Portainer no passo 4.
 
-## 2. Arquivo no servidor (2 minutos)
+Não troque as chaves depois: `encryptionKey` é o que abre as credenciais cifradas (trocar obriga todos a logarem de novo) e `jwtSigningKey` assina os tokens. Guarde o `.secrets/config.json` em lugar seguro como cópia.
 
-```sh
-scp .secrets/config.json usuario@SERVIDOR:/tmp/config.json
-```
+## 2. Sem acesso SSH/SCP ao servidor
 
-No servidor:
-
-```sh
-sudo mkdir -p /opt/classic-mail && sudo chmod 700 /opt/classic-mail
-sudo mv /tmp/config.json /opt/classic-mail/config.json
-sudo chown 1000:1000 /opt/classic-mail/config.json && sudo chmod 600 /opt/classic-mail/config.json
-```
-
-(O container roda como UID 1000 e monta o arquivo somente leitura.)
+Tudo o que o servidor precisa chega por variáveis de ambiente do stack: nenhum arquivo é copiado para o host. Se um dia você tiver shell no host e preferir arquivo, use `deploy/portainer/stack-port.yml` com `CONFIG_FILE` apontando para `/opt/classic-mail/config.json` (modo 600, dono UID 1000); o conteúdo é o mesmo.
 
 ## 3. Nginx no host e certificado (5 minutos, com o DNS já respondendo)
 
@@ -65,20 +55,22 @@ Stacks > **Add stack** > nome `classic-mail` > **Repository**:
 
 - Repository URL: `https://github.com/lucmousinho/classic-mail-mcp`
 - Reference: `refs/heads/main`
-- Compose path: `deploy/portainer/stack-port.yml`
+- Compose path: `deploy/portainer/stack-port-env.yml`
 
-Environment variables:
+Environment variables (clique em **Advanced mode** e cole as linhas; a última é a que o wizard imprimiu):
 
-| Nome          | Valor                                                              |
-| ------------- | ------------------------------------------------------------------ |
-| `IMAGE`       | `ghcr.io/lucmousinho/classic-mail-mcp:latest`                      |
-| `BASE_URL`    | `https://classic-mail.mcp.mambootech.com`                          |
-| `CONFIG_FILE` | `/opt/classic-mail/config.json`                                    |
-| `AUTH_MODE`   | `mailbox`                                                          |
-| `ACCESS_MODE` | `read-write` (leitura e envio; `read-only` deixa só 6 ferramentas) |
-| `BIND_PORT`   | `8080`                                                             |
+```
+IMAGE=ghcr.io/lucmousinho/classic-mail-mcp:latest
+BASE_URL=https://classic-mail.mcp.mambootech.com
+AUTH_MODE=mailbox
+ACCESS_MODE=read-write
+BIND_PORT=8080
+APP_CONFIG_JSON={"allowedDomains":["mamboo.co.ao","mamboo.co.tz","mambootech.com"],"provider":{...},"displayName":"Mamboo Mail","jwtSigningKey":"...","encryptionKey":"...","consentSigningKey":"..."}
+```
 
-**Deploy the stack**. Em Containers, `classic-mail-mcp` fica _healthy_ em menos de um minuto. Se reiniciar em loop, veja os logs: "Classic Mail could not start" significa `config.json` inválido, não montado ou com UID errado.
+A linha `APP_CONFIG_JSON` precisa ficar em **uma linha só**, exatamente como impressa, sem aspas em volta. `ACCESS_MODE=read-write` libera leitura e envio (21 ferramentas); `read-only` deixa só 6.
+
+**Deploy the stack**. Em Containers, `classic-mail-mcp` fica _healthy_ em menos de um minuto. Se reiniciar em loop, veja os logs do container no Portainer: "Classic Mail could not start" significa `APP_CONFIG_JSON` quebrada ou `BASE_URL` inválida.
 
 Teste pelo terminal:
 
@@ -125,9 +117,9 @@ docker exec classic-mail-mcp node dist/users-cli.js remove pessoa@mamboo.co.ao
 
 Outras rotinas:
 
-- **Backup**: volume `classic_mail_data` (SQLite com usuários cifrados, sessões e histórico de envio) mais `/opt/classic-mail/config.json`. Sem o `config.json` (as chaves) o banco não abre.
+- **Backup**: volume `classic_mail_data` (SQLite com usuários cifrados, sessões e histórico de envio) mais a linha `APP_CONFIG_JSON` (ou o `.secrets/config.json` que o wizard gravou). Sem as chaves o banco não abre.
 - **Atualizar**: push na `main` publica nova imagem; no Portainer, **Re-pull image and redeploy**.
-- **Adicionar um domínio**: edite `allowedDomains` em `/opt/classic-mail/config.json` e reinicie o container.
+- **Adicionar um domínio ou mudar pasta**: edite a variável `APP_CONFIG_JSON` no stack (só o trecho necessário, mantendo as três chaves iguais) e clique em **Update the stack**.
 - **Alternar leitura/escrita**: mude `ACCESS_MODE` no stack e **Update the stack**; as pessoas usam **Reconectar** no Claude para a lista de ferramentas atualizar.
 - **Logs**: só eventos (`mcp_auth_rejected` com o estágio), nunca senhas, tokens ou conteúdo de email.
 - **Limites**: 120 chamadas por minuto por pessoa, 30 envios por hora por pessoa, 4 conexões IMAP simultâneas por pessoa, anexos até 4 MiB, mensagens até 8 MiB.
@@ -141,8 +133,8 @@ Outras rotinas:
 | Página de login diz "domain is not allowed"          | Domínio fora de `allowedDomains`                                                                                                                             |
 | Página diz "rejected this email address or password" | Senha errada, ou IP do servidor temporariamente bloqueado pela DreamHost após falhas em sequência                                                            |
 | Página diz "Too many sign-in attempts"               | 5 tentativas em 15 min para aquela caixa (ou 20 por IP de origem na hora); espere                                                                            |
-| Enviou mas não apareceu em `Sent`                    | Nome da pasta diferente na caixa; ajuste `sentFolder` no `config.json` e reinicie                                                                            |
-| Container reinicia em loop                           | `config.json` inválido ou não montado; verifique com `docker logs classic-mail-mcp`                                                                          |
+| Enviou mas não apareceu em `Sent`                    | Nome da pasta diferente na caixa; ajuste `sentFolder` em `APP_CONFIG_JSON` e atualize o stack                                                                |
+| Container reinicia em loop                           | `APP_CONFIG_JSON` quebrada (quebra de linha, aspas em volta) ou `BASE_URL` sem `https://`; veja os logs do container no Portainer                            |
 | Alguém perdeu o acesso de repente                    | Foi removido com `users-cli remove`, ou `encryptionKey`/`jwtSigningKey` mudou; basta Conectar de novo                                                        |
 
 ## Modo de um operador (Google)

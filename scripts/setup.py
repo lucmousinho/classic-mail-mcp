@@ -31,7 +31,7 @@ PRESETS = {
     "custom": dict(imap="", imap_port=993, smtp="", smtp_port=465, folders={}),
 }
 
-def mailbox_setup(path):
+def mailbox_setup(path, print_env=False):
     """Multi-user mode: no mailbox password here. People sign in with their own IMAP credentials."""
     print("Classic Mail MCP · multi-user (mailbox) setup\nEach person signs in with their own mailbox; only domains you allow may register.")
     domains = [d.strip().lower() for d in ask("Allowed email domains, comma separated (e.g. mamboo.co.ao,mambootech.com)").split(",") if d.strip()]
@@ -62,19 +62,28 @@ def mailbox_setup(path):
         gid = os.getgid() if hasattr(os, "getgid") else 1000
         write_private(".env", f"LOCAL_UID={uid}\nLOCAL_GID={gid}\nACCESS_MODE=read-write\nAUTH_MODE=mailbox\n")
     print(f"\nSaved private configuration: {path}\nNo mailbox password is stored in it; people sign in with their own.")
+    if print_env:
+        # Portainer without shell/SCP access: the whole configuration travels as one stack variable.
+        # It holds signing/encryption keys (no mailbox password), so paste it only into the stack's
+        # environment variables and nowhere else.
+        print("\nPortainer > stack > Environment variables > Advanced mode: add this line, exactly as printed.")
+        print("Treat it as a secret: it carries the server's signing and encryption keys.\n")
+        print("APP_CONFIG_JSON=" + json.dumps(config, separators=(",", ":")))
     print("Next: docs/portainer.md (Portainer + Claude Team) or docs/deployment.md.")
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["bearer", "stdio", "oauth", "mailbox"], default="bearer")
     parser.add_argument("--output", default=".secrets/config.json")
+    parser.add_argument("--print-env", action="store_true",
+                        help="mailbox mode only: also print the configuration as an APP_CONFIG_JSON line for Portainer")
     args = parser.parse_args()
     os.umask(0o077)
     path = Path(args.output)
     if path.exists():
         raise ValueError("Configuration already exists; choose a new --output path")
     if args.mode == "mailbox":
-        return mailbox_setup(path)
+        return mailbox_setup(path, args.print_env)
     print("Classic Mail MCP · private setup\nOne operator owns every mailbox in this instance.")
     count = int(ask("Number of mailboxes (1–10)", "1"))
     if not 1 <= count <= 10:
