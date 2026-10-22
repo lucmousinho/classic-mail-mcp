@@ -119,6 +119,31 @@ O serviço precisa que o proxy:
 
 Traefik: as labels do `stack-traefik.yml` resolvem tudo; só confirme que o entrypoint `websecure` e o certresolver existem na sua instalação.
 
+**Nginx instalado no próprio host Ubuntu + certbot** (use o `stack-port.yml`, que publica o container em `127.0.0.1:8080`):
+
+```sh
+# 1. DNS: crie um registro A (e AAAA, se tiver IPv6) para o host, ex.: classic-mail.mcp.mambootech.com → IP do servidor
+#    Confirme antes de pedir o certificado:
+dig +short classic-mail.mcp.mambootech.com
+
+# 2. Instale o site (o arquivo pronto está em deploy/nginx/ dentro do repositório)
+sudo curl -fsSL -o /etc/nginx/sites-available/classic-mail.mcp.mambootech.com \
+  https://raw.githubusercontent.com/SEU-USUARIO/classic-mail-mcp/main/deploy/nginx/classic-mail.mcp.mambootech.com.conf
+sudo ln -s /etc/nginx/sites-available/classic-mail.mcp.mambootech.com /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# 3. Certificado (instala o certbot se ainda não existir)
+sudo apt-get install -y certbot python3-certbot-nginx   # ou: sudo snap install --classic certbot
+sudo certbot --nginx -d classic-mail.mcp.mambootech.com --redirect -m seu-email@example.com --agree-tos -n
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot renew --dry-run   # confirma a renovação automática (timer do systemd)
+
+# 4. Confira que o certbot não mexeu no location: proxy_read_timeout/proxy_buffering precisam continuar lá
+grep -n "proxy_read_timeout\|proxy_buffering\|listen 443" /etc/nginx/sites-available/classic-mail.mcp.mambootech.com
+```
+
+Para outro domínio, troque o `server_name` e o nome do arquivo; o restante do bloco não muda. Se o host tem `ufw`, só 80 e 443 precisam estar abertos; a porta 8080 fica presa em `127.0.0.1` pelo próprio stack.
+
 Nginx Proxy Manager: crie um Proxy Host para `mail-mcp.seudominio.com` apontando para `http://127.0.0.1:8080` (stack de porta) ou `http://classic-mail-mcp:8080` (se o NPM estiver na mesma rede Docker), ative **Force SSL** e **HTTP/2**, e na aba **Advanced** cole:
 
 ```nginx
